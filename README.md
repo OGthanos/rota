@@ -185,6 +185,29 @@ docker run -d \
   ghcr.io/alpkeskin/rota:latest
 ```
 
+### From Source
+
+```bash
+# Prerequisites: Go 1.25.3+, Node.js 20+, pnpm, TimescaleDB 2.22+
+
+# Clone the repository
+git clone https://github.com/alpkeskin/rota.git
+cd rota
+
+# Copy and configure environment
+cp .env.example .env
+# Edit .env as needed
+
+# Start Core (Go API + proxy server)
+cd core
+go run ./cmd/server/main.go
+
+# Start Dashboard (in a new terminal)
+cd dashboard
+pnpm install
+NEXT_PUBLIC_API_URL=http://localhost:8001 pnpm dev
+```
+
 ### Testing the Proxy
 
 ```bash

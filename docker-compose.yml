@@ -62,8 +62,8 @@ services:
     image: timescale/timescaledb:2.22.1-pg17
     container_name: rota-timescaledb
     restart: unless-stopped
-    ports:
-      - "5432:5432"
+    # Port intentionally NOT exposed to host — DB is internal only
+    # Use 127.0.0.1:5432:5432 only if local debug access is needed
     environment:
       - POSTGRES_USER=${DB_USER:-rota}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-rota_password}

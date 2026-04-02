@@ -147,7 +147,8 @@ export default function UsersPage() {
   }
 
   const copyProxyURL = (u: ProxyUser) => {
-    const url = `http://${u.username}:***@YOUR_SERVER_IP:8000`
+    const host = window.location.hostname
+    const url = `http://${u.username}:***@${host}:8000`
     navigator.clipboard.writeText(url)
     toast.success("Proxy URL copied (replace *** with password)")
   }
@@ -185,7 +186,7 @@ export default function UsersPage() {
               <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
               <div>
                 <div className="font-medium text-foreground">Auth via Proxy-Authorization</div>
-                <div>Use <code className="text-xs">http://user:pass@YOUR_SERVER_IP:8000</code> in your client</div>
+                <div>Use <code className="text-xs">http://user:pass@&lt;your-host&gt;:8000</code> in your client</div>
               </div>
             </div>
             <div className="flex items-start gap-2">

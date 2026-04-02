@@ -226,6 +226,7 @@ func (s *SourceService) fetchAndImport(ctx context.Context, src *models.ProxySou
 			Protocol: proto,
 			Username: p.username,
 			Password: p.password,
+			SourceID: &src.ID,
 		})
 		addresses = append(addresses, p.address)
 	}

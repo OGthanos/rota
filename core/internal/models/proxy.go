@@ -61,6 +61,7 @@ type CreateProxyRequest struct {
 	Username *string  `json:"username,omitempty"`
 	Password *string  `json:"password,omitempty"`
 	Tags     []string `json:"tags,omitempty"`
+	SourceID *int     `json:"source_id,omitempty"` // set internally when importing from a source
 }
 
 // UpdateProxyRequest represents a request to update a proxy

@@ -412,6 +412,17 @@ func (h *ProxyHandler) exportCSV(w http.ResponseWriter, proxies []models.ProxyWi
 	}
 }
 
+// DeleteAll removes every proxy from the database.
+func (h *ProxyHandler) DeleteAll(w http.ResponseWriter, r *http.Request) {
+	deleted, err := h.proxyRepo.DeleteAll(r.Context())
+	if err != nil {
+		h.logger.Error("failed to delete all proxies", "error", err)
+		h.errorResponse(w, http.StatusInternalServerError, "Failed to delete all proxies")
+		return
+	}
+	h.jsonResponse(w, http.StatusOK, map[string]interface{}{"deleted": deleted})
+}
+
 // jsonResponse sends a JSON response
 func (h *ProxyHandler) jsonResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")

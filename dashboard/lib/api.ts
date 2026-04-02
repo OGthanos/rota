@@ -213,6 +213,10 @@ class ApiClient {
     })
   }
 
+  async deleteAllProxies(): Promise<{ deleted: number }> {
+    return this.request("/api/v1/proxies", { method: "DELETE" })
+  }
+
   async testProxy(id: number): Promise<ProxyTestResult> {
     return this.request<ProxyTestResult>(`/api/v1/proxies/${id}/test`, {
       method: "POST",

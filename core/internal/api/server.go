@@ -219,6 +219,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/proxies", s.proxyHandler.Create)
 		r.Post("/proxies/bulk", s.proxyHandler.BulkCreate)
 		r.Post("/proxies/bulk-delete", s.proxyHandler.BulkDelete)
+		r.Delete("/proxies", s.proxyHandler.DeleteAll)
 		r.Get("/proxies/export", s.proxyHandler.Export)
 		r.Put("/proxies/{id}", s.proxyHandler.Update)
 		r.Delete("/proxies/{id}", s.proxyHandler.Delete)

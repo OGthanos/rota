@@ -117,7 +117,8 @@ export default function ProxiesPage() {
   const [isDragging, setIsDragging] = React.useState(false)
   const [isReloading, setIsReloading] = React.useState(false)
   const [deleteConfirm, setDeleteConfirm] = React.useState<{ open: boolean; proxyId: number | null }>({ open: false, proxyId: null })
-  const [bulkDeleteConfirm, setBulkDeleteConfirm] = React.useState(false)
+   const [bulkDeleteConfirm, setBulkDeleteConfirm] = React.useState(false)
+   const [deleteAllConfirm, setDeleteAllConfirm] = React.useState(false)
 
   // Debounce search query
   React.useEffect(() => {
@@ -251,6 +252,19 @@ export default function ProxiesPage() {
       toast.error("Failed to delete proxies", error instanceof Error ? error.message : "Unknown error")
     } finally {
       setBulkDeleteConfirm(false)
+    }
+  }
+
+  const confirmDeleteAll = async () => {
+    try {
+      const res = await api.deleteAllProxies()
+      setRowSelection({})
+      toast.success(`${res.deleted} proxies deleted`)
+      fetchProxies()
+    } catch (error) {
+      toast.error("Failed to delete all proxies")
+    } finally {
+      setDeleteAllConfirm(false)
     }
   }
 
@@ -677,6 +691,14 @@ export default function ProxiesPage() {
                   >
                     <Trash2 className="mr-2 h-4 w-4" />
                     Delete selected ({Object.keys(rowSelection).length})
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-red-600 font-semibold"
+                    onClick={() => setDeleteAllConfirm(true)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete ALL proxies
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1268,22 +1290,40 @@ export default function ProxiesPage() {
       </AlertDialog>
 
       {/* Bulk Delete Confirmation Dialog */}
-      <AlertDialog open={bulkDeleteConfirm} onOpenChange={setBulkDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {Object.keys(rowSelection).length} proxies?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the selected proxies.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmBulkDelete} className="bg-red-600 hover:bg-red-700">
-              Delete All
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+       <AlertDialog open={bulkDeleteConfirm} onOpenChange={setBulkDeleteConfirm}>
+         <AlertDialogContent>
+           <AlertDialogHeader>
+             <AlertDialogTitle>Delete {Object.keys(rowSelection).length} proxies?</AlertDialogTitle>
+             <AlertDialogDescription>
+               This action cannot be undone. This will permanently delete the selected proxies.
+             </AlertDialogDescription>
+           </AlertDialogHeader>
+           <AlertDialogFooter>
+             <AlertDialogCancel>Cancel</AlertDialogCancel>
+             <AlertDialogAction onClick={confirmBulkDelete} className="bg-red-600 hover:bg-red-700">
+               Delete
+             </AlertDialogAction>
+           </AlertDialogFooter>
+         </AlertDialogContent>
+       </AlertDialog>
+
+       <AlertDialog open={deleteAllConfirm} onOpenChange={setDeleteAllConfirm}>
+         <AlertDialogContent>
+           <AlertDialogHeader>
+             <AlertDialogTitle>Delete ALL proxies?</AlertDialogTitle>
+             <AlertDialogDescription>
+               This will permanently delete <strong>every proxy</strong> in the database,
+               including those in pools. This action cannot be undone.
+             </AlertDialogDescription>
+           </AlertDialogHeader>
+           <AlertDialogFooter>
+             <AlertDialogCancel>Cancel</AlertDialogCancel>
+             <AlertDialogAction onClick={confirmDeleteAll} className="bg-red-600 hover:bg-red-700">
+               Delete All
+             </AlertDialogAction>
+           </AlertDialogFooter>
+         </AlertDialogContent>
+       </AlertDialog>
     </div>
   )
 }

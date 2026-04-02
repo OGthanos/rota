@@ -422,6 +422,18 @@ var migrations = []Migration{
 		`,
 	},
 	{
+		Version:     20,
+		Description: "Add source_id to proxies for cascade delete on source removal",
+		Up: `
+			ALTER TABLE proxies ADD COLUMN IF NOT EXISTS source_id INTEGER REFERENCES proxy_sources(id) ON DELETE CASCADE;
+			CREATE INDEX IF NOT EXISTS idx_proxies_source_id ON proxies(source_id);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_proxies_source_id;
+			ALTER TABLE proxies DROP COLUMN IF EXISTS source_id;
+		`,
+	},
+	{
 		Version:     19,
 		Description: "Add proxy cleanup settings and rate limit to proxy_users",
 		Up: `

@@ -200,13 +200,13 @@ func (r *ProxyRepository) Create(ctx context.Context, req models.CreateProxyRequ
 		tags = []string{}
 	}
 	query := `
-		INSERT INTO proxies (address, protocol, username, password, tags)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO proxies (address, protocol, username, password, tags, source_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, address, protocol, username, status, tags, created_at, updated_at
 	`
 
 	var p models.Proxy
-	err := r.db.Pool.QueryRow(ctx, query, req.Address, req.Protocol, req.Username, req.Password, tags).Scan(
+	err := r.db.Pool.QueryRow(ctx, query, req.Address, req.Protocol, req.Username, req.Password, tags, req.SourceID).Scan(
 		&p.ID, &p.Address, &p.Protocol, &p.Username, &p.Status, &p.Tags, &p.CreatedAt, &p.UpdatedAt,
 	)
 
@@ -239,9 +239,9 @@ func (r *ProxyRepository) Upsert(ctx context.Context, req models.CreateProxyRequ
 	if checkErr == pgx.ErrNoRows {
 		// Insert new
 		insErr := r.db.Pool.QueryRow(ctx,
-			`INSERT INTO proxies (address, protocol, username, password, tags)
-			 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-			req.Address, req.Protocol, req.Username, req.Password, tags,
+			`INSERT INTO proxies (address, protocol, username, password, tags, source_id)
+			 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			req.Address, req.Protocol, req.Username, req.Password, tags, req.SourceID,
 		).Scan(&id)
 		if insErr != nil {
 			return 0, "failed", insErr
@@ -252,20 +252,30 @@ func (r *ProxyRepository) Upsert(ctx context.Context, req models.CreateProxyRequ
 		return 0, "failed", checkErr
 	}
 
-	// Update existing — update tags/auth if provided, skip if nothing changed
+	// Update existing — update tags/auth/source_id if provided
 	_, updErr := r.db.Pool.Exec(ctx,
 		`UPDATE proxies SET
 			username   = COALESCE($1, username),
 			password   = COALESCE($2, password),
 			tags       = CASE WHEN array_length($3::text[], 1) > 0 THEN $3::text[] ELSE tags END,
+			source_id  = COALESCE($4, source_id),
 			updated_at = NOW()
-		WHERE id = $4`,
-		req.Username, req.Password, tags, existingID,
+		WHERE id = $5`,
+		req.Username, req.Password, tags, req.SourceID, existingID,
 	)
 	if updErr != nil {
 		return existingID, "failed", updErr
 	}
 	return existingID, "updated", nil
+}
+
+// DeleteAll removes all proxies from the database. Returns count deleted.
+func (r *ProxyRepository) DeleteAll(ctx context.Context) (int, error) {
+	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM proxies`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete all proxies: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // DeleteDeadProxies removes proxies that have been in failed status for more than maxDays days

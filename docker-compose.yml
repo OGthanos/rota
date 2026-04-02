@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   rota-core:
     build:
@@ -8,20 +6,20 @@ services:
     container_name: rota-core
     restart: unless-stopped
     ports:
-      - "8000:8000" # Proxy port
-      - "8001:8001" # API port
+      - "${PROXY_PORT:-8000}:8000"
+      - "${API_PORT:-8001}:8001"
     environment:
-      - PROXY_PORT=8000
-      - API_PORT=8001
-      - LOG_LEVEL=info
-      - DB_HOST=timescaledb
-      - DB_PORT=5432
-      - DB_USER=rota
-      - DB_PASSWORD=R0ta_Pg_S3cur3P@ss!
-      - DB_NAME=rota
-      - DB_SSLMODE=disable
-      - ROTA_ADMIN_USER=admin
-      - ROTA_ADMIN_PASSWORD=admin
+      - PROXY_PORT=${PROXY_PORT:-8000}
+      - API_PORT=${API_PORT:-8001}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - DB_HOST=${DB_HOST:-timescaledb}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-rota}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-rota}
+      - DB_SSLMODE=${DB_SSLMODE:-disable}
+      - ROTA_ADMIN_USER=${ROTA_ADMIN_USER:-admin}
+      - ROTA_ADMIN_PASSWORD=${ROTA_ADMIN_PASSWORD}
     networks:
       - rota-network
     healthcheck:
@@ -47,13 +45,13 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=https://YOUR_API_DOMAIN
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     container_name: rota-dashboard
     restart: unless-stopped
     ports:
       - "3020:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=https://YOUR_API_DOMAIN
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     networks:
       - rota-network
     depends_on:
@@ -67,16 +65,16 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=rota
-      - POSTGRES_PASSWORD=R0ta_Pg_S3cur3P@ss!
-      - POSTGRES_DB=rota
+      - POSTGRES_USER=${DB_USER:-rota}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-rota}
       - TIMESCALEDB_TELEMETRY=off
     volumes:
       - ./data/timescaledb:/var/lib/postgresql/data
     networks:
       - rota-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rota -d rota"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-rota} -d ${DB_NAME:-rota}"]
       interval: 10s
       timeout: 5s
       start_period: 10s

@@ -36,6 +36,7 @@ type Server struct {
 	db        *database.DB
 	port      int
 	jwtSecret string
+	authRL    *authRateLimiter
 
 	// Proxy server reference for reloading
 	proxyServer ProxyServer
@@ -102,12 +103,23 @@ func New(cfg *config.Config, log *logger.Logger, db *database.DB) *Server {
 	poolHandler := handlers.NewPoolHandler(poolRepo, poolSvc, log)
 	userHandler := handlers.NewUserHandler(userRepo, poolRepo, log)
 
+	// Auth rate limiter (per-IP block + global lockout)
+	authRL := newAuthRateLimiter(
+		cfg.AuthIPMaxAttempts,
+		cfg.AuthIPWindowMinutes,
+		cfg.AuthIPBlockMinutes,
+		cfg.AuthGlobalMaxPerMinute,
+		cfg.AuthGlobalLockoutMin,
+		log,
+	)
+
 	s := &Server{
 		router:               chi.NewRouter(),
 		logger:               log,
 		db:                   db,
 		port:                 cfg.APIPort,
 		jwtSecret:            jwtSecret,
+		authRL:               authRL,
 		authHandler:          authHandler,
 		healthHandler:        healthHandler,
 		dashboardHandler:     dashboardHandler,
@@ -178,7 +190,8 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/api/v1/swagger.json", s.serveSwaggerJSON)
 
 	// Auth: only login is public; everything else requires a valid JWT
-	s.router.Post("/api/v1/auth/login", s.authHandler.Login)
+	// Auth rate limiter wraps the login handler — per-IP block + global lockout
+	s.router.With(s.authRL.Middleware()).Post("/api/v1/auth/login", s.authHandler.Login)
 
 	// ── Protected routes (JWT required) ────────────────────────────────────
 	s.router.Route("/api/v1", func(r chi.Router) {

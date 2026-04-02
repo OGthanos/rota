@@ -80,6 +80,14 @@ class ApiClient {
       },
     })
 
+    if (response.status === 401) {
+      this.clearToken()
+      if (typeof window !== "undefined") {
+        window.location.href = "/login?reason=session_expired"
+      }
+      throw new Error("Session expired. Please log in again.")
+    }
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,

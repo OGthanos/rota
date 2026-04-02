@@ -1,27 +1,33 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  // Check if already logged in
+  // Check if already logged in or redirected due to expired session
   useEffect(() => {
-    const token = localStorage.getItem("auth_token");
-    if (token) {
-      router.push("/dashboard");
+    if (searchParams.get("reason") === "session_expired") {
+      setSessionExpired(true);
+    } else {
+      const token = localStorage.getItem("auth_token");
+      if (token) {
+        router.push("/dashboard");
+      }
     }
-  }, [router]);
+  }, [router, searchParams]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -59,6 +65,11 @@ export default function LoginPage() {
 
             {/* Login form */}
             <form onSubmit={handleSubmit} className="space-y-4">
+              {sessionExpired && !error && (
+                <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-3 text-sm text-yellow-500">
+                  Your session has expired. Please log in again.
+                </div>
+              )}
               {error && (
                 <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-500">
                   {error}
@@ -114,5 +125,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

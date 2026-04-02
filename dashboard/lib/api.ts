@@ -12,6 +12,21 @@ import {
   BulkProxyRequest,
   BulkDeleteRequest,
   ProxyTestResult,
+  ProxySource,
+  CreateSourceRequest,
+  UpdateSourceRequest,
+  ProxyPool,
+  PoolProxy,
+  GeoSummaryItem,
+  GeoCityItem,
+  PoolHealthCheckResult,
+  HCJob,
+  CreatePoolRequest,
+  ProxyUser,
+  CreateProxyUserRequest,
+  UpdateProxyUserRequest,
+  PoolAlertRule,
+  CreatePoolAlertRuleRequest,
 } from "./types"
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
@@ -65,6 +80,14 @@ class ApiClient {
       },
     })
 
+    if (response.status === 401) {
+      this.clearToken()
+      if (typeof window !== "undefined") {
+        window.location.href = "/login?reason=session_expired"
+      }
+      throw new Error("Session expired. Please log in again.")
+    }
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,
@@ -88,6 +111,24 @@ class ApiClient {
     })
     this.setToken(response.token)
     return response
+  }
+
+  async getAdminInfo(): Promise<{ username: string }> {
+    return this.request("/api/v1/auth/me")
+  }
+
+  async changePassword(opts: {
+    current_password: string
+    new_password: string
+    new_username?: string
+  }): Promise<{ message: string; username: string; token: string }> {
+    const res = await this.request<{ message: string; username: string; token: string }>(
+      "/api/v1/auth/change-password",
+      { method: "POST", body: JSON.stringify(opts) }
+    )
+    // Update stored token so session stays valid after username/password change
+    this.setToken(res.token)
+    return res
   }
 
   // Dashboard
@@ -170,6 +211,10 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(request),
     })
+  }
+
+  async deleteAllProxies(): Promise<{ deleted: number }> {
+    return this.request("/api/v1/proxies", { method: "DELETE" })
   }
 
   async testProxy(id: number): Promise<ProxyTestResult> {
@@ -280,6 +325,169 @@ class ApiClient {
     return this.request("/api/v1/settings/reset", {
       method: "POST",
     })
+  }
+
+  // ── Proxy Sources ─────────────────────────────────────────────────────────
+  async getSources(): Promise<{ sources: ProxySource[] }> {
+    return this.request("/api/v1/sources")
+  }
+
+  async createSource(req: CreateSourceRequest): Promise<ProxySource> {
+    return this.request("/api/v1/sources", { method: "POST", body: JSON.stringify(req) })
+  }
+
+  async updateSource(id: number, req: UpdateSourceRequest): Promise<ProxySource> {
+    return this.request(`/api/v1/sources/${id}`, { method: "PUT", body: JSON.stringify(req) })
+  }
+
+  async deleteSource(id: number): Promise<void> {
+    return this.request(`/api/v1/sources/${id}`, { method: "DELETE" })
+  }
+
+  async fetchSourceNow(id: number): Promise<{ source: ProxySource; imported: number }> {
+    return this.request(`/api/v1/sources/${id}/fetch`, { method: "POST" })
+  }
+
+  async enrichGeo(): Promise<{ enriched: number }> {
+    return this.request("/api/v1/sources/enrich-geo", { method: "POST" })
+  }
+
+  // ── Proxy Pools ───────────────────────────────────────────────────────────
+  async getPools(): Promise<{ pools: ProxyPool[] }> {
+    return this.request("/api/v1/pools")
+  }
+
+  async getPool(id: number): Promise<ProxyPool> {
+    return this.request(`/api/v1/pools/${id}`)
+  }
+
+  async createPool(req: CreatePoolRequest): Promise<ProxyPool> {
+    return this.request("/api/v1/pools", { method: "POST", body: JSON.stringify(req) })
+  }
+
+  async updatePool(id: number, req: Partial<CreatePoolRequest>): Promise<ProxyPool> {
+    return this.request(`/api/v1/pools/${id}`, { method: "PUT", body: JSON.stringify(req) })
+  }
+
+  async deletePool(id: number): Promise<void> {
+    return this.request(`/api/v1/pools/${id}`, { method: "DELETE" })
+  }
+
+  async getPoolProxies(id: number): Promise<{ proxies: PoolProxy[] }> {
+    return this.request(`/api/v1/pools/${id}/proxies`)
+  }
+
+  async addPoolProxies(id: number, proxyIds: number[]): Promise<{ added: number }> {
+    return this.request(`/api/v1/pools/${id}/proxies`, {
+      method: "POST",
+      body: JSON.stringify({ proxy_ids: proxyIds }),
+    })
+  }
+
+  async removePoolProxies(id: number, proxyIds: number[]): Promise<{ removed: number }> {
+    return this.request(`/api/v1/pools/${id}/proxies`, {
+      method: "DELETE",
+      body: JSON.stringify({ proxy_ids: proxyIds }),
+    })
+  }
+
+  async syncPool(id: number): Promise<{ synced: number }> {
+    return this.request(`/api/v1/pools/${id}/sync`, { method: "POST" })
+  }
+
+  async healthCheckPool(
+    id: number,
+    url?: string,
+    workers?: number
+  ): Promise<{ job_id: string; pool_id: number; status: string }> {
+    return this.request(`/api/v1/pools/${id}/health-check`, {
+      method: "POST",
+      body: JSON.stringify({ url: url ?? "", workers: workers ?? 20 }),
+    })
+  }
+
+  async getHealthCheckJob(poolId: number, jobId: string): Promise<HCJob> {
+    return this.request(`/api/v1/pools/${poolId}/health-check/${jobId}`)
+  }
+
+  async getHealthCheckJobs(poolId: number): Promise<{ jobs: HCJob[] }> {
+    return this.request(`/api/v1/pools/${poolId}/health-check/jobs`)
+  }
+
+  async getGeoSummary(): Promise<{ geo: GeoSummaryItem[] }> {
+    return this.request("/api/v1/pools/geo-summary")
+  }
+
+  async getGeoByCountry(): Promise<{ geo: GeoSummaryItem[] }> {
+    return this.request("/api/v1/pools/geo-countries")
+  }
+
+  async getGeoCities(countryCode: string): Promise<{ cities: GeoCityItem[] }> {
+    return this.request(`/api/v1/pools/geo-cities/${countryCode}`)
+  }
+
+  // ── Proxy Users ───────────────────────────────────────────────────────────
+  async getProxyUsers(): Promise<{ users: ProxyUser[] }> {
+    return this.request("/api/v1/proxy-users")
+  }
+
+  async getProxyUser(id: number): Promise<ProxyUser> {
+    return this.request(`/api/v1/proxy-users/${id}`)
+  }
+
+  async createProxyUser(req: CreateProxyUserRequest): Promise<ProxyUser> {
+    return this.request("/api/v1/proxy-users", { method: "POST", body: JSON.stringify(req) })
+  }
+
+  async updateProxyUser(id: number, req: UpdateProxyUserRequest): Promise<ProxyUser> {
+    return this.request(`/api/v1/proxy-users/${id}`, { method: "PUT", body: JSON.stringify(req) })
+  }
+
+  async deleteProxyUser(id: number): Promise<void> {
+    return this.request(`/api/v1/proxy-users/${id}`, { method: "DELETE" })
+  }
+
+  // ── Pool Export ──────────────────────────────────────────────────────────
+  getPoolExportUrl(poolId: number, format: "txt" | "csv" = "txt"): string {
+    const base = typeof window !== "undefined" ? window.location.origin : API_BASE_URL
+    const token = this.token
+    return `${base}/api/v1/pools/${poolId}/export?format=${format}${token ? `&token=${token}` : ""}`
+  }
+
+  // ── Alert Rules ──────────────────────────────────────────────────────────
+  async getAlertRules(poolId: number): Promise<PoolAlertRule[]> {
+    const data = await this.request<{ rules: PoolAlertRule[] }>(`/api/v1/pools/${poolId}/alert-rules`)
+    return data.rules
+  }
+
+  async createAlertRule(poolId: number, req: CreatePoolAlertRuleRequest): Promise<PoolAlertRule> {
+    return this.request(`/api/v1/pools/${poolId}/alert-rules`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    })
+  }
+
+  async updateAlertRule(poolId: number, ruleId: number, req: CreatePoolAlertRuleRequest): Promise<PoolAlertRule> {
+    return this.request(`/api/v1/pools/${poolId}/alert-rules/${ruleId}`, {
+      method: "PUT",
+      body: JSON.stringify(req),
+    })
+  }
+
+  async deleteAlertRule(poolId: number, ruleId: number): Promise<void> {
+    return this.request(`/api/v1/pools/${poolId}/alert-rules/${ruleId}`, { method: "DELETE" })
+  }
+
+  // ── ISP / Tag lists ──────────────────────────────────────────────────────
+  async getISPList(q?: string): Promise<string[]> {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : ""
+    const data = await this.request<{ isps: string[] }>(`/api/v1/pools/isp-list${qs}`)
+    return data.isps
+  }
+
+  async getTagList(): Promise<string[]> {
+    const data = await this.request<{ tags: string[] }>("/api/v1/pools/tag-list")
+    return data.tags
   }
 
   // WebSocket connections

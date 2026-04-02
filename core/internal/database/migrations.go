@@ -214,6 +214,243 @@ var migrations = []Migration{
 		`,
 	},
 	{
+		Version:     11,
+		Description: "Add GeoIP fields to proxies table",
+		Up: `
+			ALTER TABLE proxies
+				ADD COLUMN IF NOT EXISTS country_code  VARCHAR(3),
+				ADD COLUMN IF NOT EXISTS country_name  VARCHAR(100),
+				ADD COLUMN IF NOT EXISTS region_name   VARCHAR(100),
+				ADD COLUMN IF NOT EXISTS city_name     VARCHAR(100),
+				ADD COLUMN IF NOT EXISTS latitude      DOUBLE PRECISION,
+				ADD COLUMN IF NOT EXISTS longitude     DOUBLE PRECISION,
+				ADD COLUMN IF NOT EXISTS isp           VARCHAR(255),
+				ADD COLUMN IF NOT EXISTS geo_updated_at TIMESTAMP;
+
+			CREATE INDEX IF NOT EXISTS idx_proxies_country_code ON proxies(country_code);
+			CREATE INDEX IF NOT EXISTS idx_proxies_region_name  ON proxies(region_name);
+		`,
+		Down: `
+			ALTER TABLE proxies
+				DROP COLUMN IF EXISTS country_code,
+				DROP COLUMN IF EXISTS country_name,
+				DROP COLUMN IF EXISTS region_name,
+				DROP COLUMN IF EXISTS city_name,
+				DROP COLUMN IF EXISTS latitude,
+				DROP COLUMN IF EXISTS longitude,
+				DROP COLUMN IF EXISTS isp,
+				DROP COLUMN IF EXISTS geo_updated_at;
+			DROP INDEX IF EXISTS idx_proxies_country_code;
+			DROP INDEX IF EXISTS idx_proxies_region_name;
+		`,
+	},
+	{
+		Version:     12,
+		Description: "Create proxy_sources table",
+		Up: `
+			CREATE TABLE IF NOT EXISTS proxy_sources (
+				id          SERIAL PRIMARY KEY,
+				name        VARCHAR(255) NOT NULL,
+				url         TEXT NOT NULL,
+				protocol    VARCHAR(20) NOT NULL DEFAULT 'http',
+				enabled     BOOLEAN NOT NULL DEFAULT true,
+				interval_minutes INTEGER NOT NULL DEFAULT 60,
+				last_fetched_at  TIMESTAMP,
+				last_count       INTEGER NOT NULL DEFAULT 0,
+				last_error       TEXT,
+				created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_proxy_sources_enabled ON proxy_sources(enabled);
+		`,
+		Down: `
+			DROP TABLE IF EXISTS proxy_sources;
+		`,
+	},
+	{
+		Version:     13,
+		Description: "Create proxy pools and pool_proxies tables",
+		Up: `
+			CREATE TABLE IF NOT EXISTS proxy_pools (
+				id               SERIAL PRIMARY KEY,
+				name             VARCHAR(255) NOT NULL,
+				description      TEXT,
+				country_code     VARCHAR(3),
+				region_name      VARCHAR(100),
+				city_name        VARCHAR(100),
+				rotation_method  VARCHAR(30) NOT NULL DEFAULT 'roundrobin',
+				stick_count      INTEGER NOT NULL DEFAULT 10,
+				health_check_url TEXT NOT NULL DEFAULT 'https://api.ipify.org',
+				health_check_cron VARCHAR(100) NOT NULL DEFAULT '*/30 * * * *',
+				health_check_enabled BOOLEAN NOT NULL DEFAULT true,
+				auto_sync        BOOLEAN NOT NULL DEFAULT true,
+				enabled          BOOLEAN NOT NULL DEFAULT true,
+				created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at       TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS pool_proxies (
+				pool_id   INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				proxy_id  INTEGER NOT NULL REFERENCES proxies(id) ON DELETE CASCADE,
+				added_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+				PRIMARY KEY (pool_id, proxy_id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_pool_proxies_pool_id  ON pool_proxies(pool_id);
+			CREATE INDEX IF NOT EXISTS idx_pool_proxies_proxy_id ON pool_proxies(proxy_id);
+		`,
+		Down: `
+			DROP TABLE IF EXISTS pool_proxies;
+			DROP TABLE IF EXISTS proxy_pools;
+		`,
+	},
+	{
+		Version:     16,
+		Description: "Create admin_credentials table for dashboard authentication",
+		Up: `
+			CREATE TABLE IF NOT EXISTS admin_credentials (
+				id            SERIAL PRIMARY KEY,
+				username      VARCHAR(255) NOT NULL UNIQUE,
+				password_hash TEXT NOT NULL,
+				created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+		`,
+		Down: `DROP TABLE IF EXISTS admin_credentials;`,
+	},
+	{
+		Version:     15,
+		Description: "Add pool_geo_filters table for multi-location pool membership",
+		Up: `
+			CREATE TABLE IF NOT EXISTS pool_geo_filters (
+				id           SERIAL PRIMARY KEY,
+				pool_id      INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				country_code VARCHAR(3),
+				city_name    VARCHAR(100),
+				UNIQUE (pool_id, country_code, city_name)
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_geo_filters_pool_id ON pool_geo_filters(pool_id);
+
+			-- Migrate existing single country/city filters into the new table
+			INSERT INTO pool_geo_filters (pool_id, country_code, city_name)
+			SELECT id, country_code, city_name
+			FROM proxy_pools
+			WHERE country_code IS NOT NULL
+			ON CONFLICT DO NOTHING;
+		`,
+		Down: `DROP TABLE IF EXISTS pool_geo_filters;`,
+	},
+	{
+		Version:     14,
+		Description: "Create proxy_users table for per-user pool authentication",
+		Up: `
+			CREATE TABLE IF NOT EXISTS proxy_users (
+				id               SERIAL PRIMARY KEY,
+				username         VARCHAR(255) NOT NULL UNIQUE,
+				password_hash    TEXT NOT NULL,
+				enabled          BOOLEAN NOT NULL DEFAULT true,
+				main_pool_id     INTEGER REFERENCES proxy_pools(id) ON DELETE SET NULL,
+				fallback_pool_ids INTEGER[] NOT NULL DEFAULT '{}',
+				max_retries      INTEGER NOT NULL DEFAULT 5,
+				created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at       TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_proxy_users_username ON proxy_users(username);
+			CREATE INDEX IF NOT EXISTS idx_proxy_users_enabled  ON proxy_users(enabled);
+		`,
+		Down: `
+			DROP TABLE IF EXISTS proxy_users;
+		`,
+	},
+	{
+		Version:     17,
+		Description: "Add tags to proxies table",
+		Up: `
+			ALTER TABLE proxies ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+			CREATE INDEX IF NOT EXISTS idx_proxies_tags ON proxies USING gin(tags);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_proxies_tags;
+			ALTER TABLE proxies DROP COLUMN IF EXISTS tags;
+		`,
+	},
+	{
+		Version:     18,
+		Description: "Add sync_mode to proxy_pools, ISP filter table, pool_alerts table",
+		Up: `
+			-- sync_mode: 'auto' | 'manual'
+			ALTER TABLE proxy_pools ADD COLUMN IF NOT EXISTS sync_mode VARCHAR(10) NOT NULL DEFAULT 'auto';
+
+			-- ISP filters for pools
+			CREATE TABLE IF NOT EXISTS pool_isp_filters (
+				id       SERIAL PRIMARY KEY,
+				pool_id  INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				isp      TEXT NOT NULL,
+				UNIQUE (pool_id, isp)
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_isp_filters_pool_id ON pool_isp_filters(pool_id);
+
+			-- Tag filters for pools
+			CREATE TABLE IF NOT EXISTS pool_tag_filters (
+				id      SERIAL PRIMARY KEY,
+				pool_id INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				tag     TEXT NOT NULL,
+				UNIQUE (pool_id, tag)
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_tag_filters_pool_id ON pool_tag_filters(pool_id);
+
+			-- Alert rules per pool: fire webhook when active proxy count drops below threshold
+			CREATE TABLE IF NOT EXISTS pool_alert_rules (
+				id                  SERIAL PRIMARY KEY,
+				pool_id             INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				enabled             BOOLEAN NOT NULL DEFAULT true,
+				min_active_proxies  INTEGER NOT NULL DEFAULT 5,
+				webhook_url         TEXT NOT NULL,
+				webhook_method      VARCHAR(10) NOT NULL DEFAULT 'POST',
+				last_fired_at       TIMESTAMP,
+				cooldown_minutes    INTEGER NOT NULL DEFAULT 30,
+				created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_alert_rules_pool_id ON pool_alert_rules(pool_id);
+		`,
+		Down: `
+			DROP TABLE IF EXISTS pool_alert_rules;
+			DROP TABLE IF EXISTS pool_tag_filters;
+			DROP TABLE IF EXISTS pool_isp_filters;
+			ALTER TABLE proxy_pools DROP COLUMN IF EXISTS sync_mode;
+		`,
+	},
+	{
+		Version:     20,
+		Description: "Add source_id to proxies for cascade delete on source removal",
+		Up: `
+			ALTER TABLE proxies ADD COLUMN IF NOT EXISTS source_id INTEGER REFERENCES proxy_sources(id) ON DELETE CASCADE;
+			CREATE INDEX IF NOT EXISTS idx_proxies_source_id ON proxies(source_id);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_proxies_source_id;
+			ALTER TABLE proxies DROP COLUMN IF EXISTS source_id;
+		`,
+	},
+	{
+		Version:     19,
+		Description: "Add proxy cleanup settings and rate limit to proxy_users",
+		Up: `
+			-- Dead proxy cleanup settings
+			INSERT INTO settings (key, value) VALUES
+			('proxy_cleanup', '{"enabled": false, "max_failed_days": 7, "min_success_rate": 0, "cleanup_interval_hours": 24}'::jsonb)
+			ON CONFLICT (key) DO NOTHING;
+
+			-- Per-user rate limiting
+			ALTER TABLE proxy_users ADD COLUMN IF NOT EXISTS requests_per_minute INTEGER NOT NULL DEFAULT 0;
+		`,
+		Down: `
+			DELETE FROM settings WHERE key = 'proxy_cleanup';
+			ALTER TABLE proxy_users DROP COLUMN IF EXISTS requests_per_minute;
+		`,
+	},
+	{
 		Version:     10,
 		Description: "Update default timeout and retry settings for better proxy compatibility",
 		Up: `

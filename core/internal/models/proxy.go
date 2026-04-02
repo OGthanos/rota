@@ -16,6 +16,17 @@ type Proxy struct {
 	AvgResponseTime    int       `json:"avg_response_time"`
 	LastCheck          *time.Time `json:"last_check,omitempty"`
 	LastError          *string   `json:"-"`
+	// GeoIP fields
+	CountryCode   *string   `json:"country_code,omitempty"`
+	CountryName   *string   `json:"country_name,omitempty"`
+	RegionName    *string   `json:"region_name,omitempty"`
+	CityName      *string   `json:"city_name,omitempty"`
+	Latitude      *float64  `json:"latitude,omitempty"`
+	Longitude     *float64  `json:"longitude,omitempty"`
+	ISP           *string   `json:"isp,omitempty"`
+	GeoUpdatedAt  *time.Time `json:"geo_updated_at,omitempty"`
+	// Tags
+	Tags          []string  `json:"tags"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -31,24 +42,52 @@ type ProxyWithStats struct {
 	SuccessRate     float64    `json:"success_rate"`
 	AvgResponseTime int        `json:"avg_response_time"`
 	LastCheck       *time.Time `json:"last_check,omitempty"`
+	// GeoIP fields
+	CountryCode  *string  `json:"country_code,omitempty"`
+	CountryName  *string  `json:"country_name,omitempty"`
+	RegionName   *string  `json:"region_name,omitempty"`
+	CityName     *string  `json:"city_name,omitempty"`
+	ISP          *string  `json:"isp,omitempty"`
+	// Tags
+	Tags         []string `json:"tags"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // CreateProxyRequest represents a request to create a proxy
 type CreateProxyRequest struct {
-	Address  string  `json:"address" validate:"required"`
-	Protocol string  `json:"protocol" validate:"required,oneof=http https socks4 socks4a socks5"`
-	Username *string `json:"username,omitempty"`
-	Password *string `json:"password,omitempty"`
+	Address  string   `json:"address" validate:"required"`
+	Protocol string   `json:"protocol" validate:"required,oneof=http https socks4 socks4a socks5"`
+	Username *string  `json:"username,omitempty"`
+	Password *string  `json:"password,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+	SourceID *int     `json:"source_id,omitempty"` // set internally when importing from a source
 }
 
 // UpdateProxyRequest represents a request to update a proxy
 type UpdateProxyRequest struct {
-	Address  string  `json:"address"`
-	Protocol string  `json:"protocol" validate:"omitempty,oneof=http https socks4 socks4a socks5"`
-	Username *string `json:"username,omitempty"`
-	Password *string `json:"password,omitempty"`
+	Address  string   `json:"address"`
+	Protocol string   `json:"protocol" validate:"omitempty,oneof=http https socks4 socks4a socks5"`
+	Username *string  `json:"username,omitempty"`
+	Password *string  `json:"password,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+}
+
+// BulkCreateResult is the result of a bulk proxy import
+type BulkCreateResult struct {
+	Created int                      `json:"created"`
+	Updated int                      `json:"updated"`
+	Skipped int                      `json:"skipped"`
+	Failed  int                      `json:"failed"`
+	Results []BulkCreateItemResult   `json:"results"`
+}
+
+// BulkCreateItemResult is a per-proxy result from bulk import
+type BulkCreateItemResult struct {
+	Address string `json:"address"`
+	Status  string `json:"status"` // "created" | "updated" | "skipped" | "failed"
+	ID      int    `json:"id,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // BulkCreateProxyRequest represents a request to create multiple proxies

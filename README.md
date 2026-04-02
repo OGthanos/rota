@@ -45,6 +45,45 @@ Whether you're conducting web scraping operations, performing security research,
 - ⏱️ **Configurable Timeouts**: Fine-grained control over request timeouts and retries
 - 🔁 **Redirect Support**: Optional HTTP redirect following
 
+### Proxy Sources & Auto-Import
+- 📥 **Remote TXT Lists**: Add URLs pointing to `ip:port` proxy lists — fetched automatically on schedule
+- 🕐 **Per-Source Interval**: Each source has its own refresh interval (in minutes)
+- 🔁 **Background Scheduler**: Overdue sources are fetched automatically every minute
+- 🌍 **Protocol per Source**: Assign HTTP, HTTPS, SOCKS4, SOCKS4a, or SOCKS5 to each list
+
+### GeoIP & Geo Distribution
+- 🗺️ **Automatic GeoIP**: Proxies are geolocated via [ip-api.com](http://ip-api.com) (free, no API key required)
+- 🏙️ **City-Level Data**: Country, region, city, ISP, latitude, longitude per proxy
+- 🔍 **Geo Explorer**: Expandable country tree with city drill-down in the dashboard
+- ♻️ **Auto-Enrich**: Geo data updated automatically after every source fetch
+
+### Proxy Pools
+- 🗂️ **Named Pools**: Group proxies by any combination of countries, cities, ISPs, or custom tags
+- ☑️ **Multi-Filter Builder**: Pick geo locations, ISP substrings, or proxy tags — mix freely in one pool
+- 🔄 **Auto / Manual Sync**: `sync_mode: auto` rebuilds membership on every import; `manual` keeps it frozen until you trigger sync explicitly
+- 🔁 **Rotation Strategies**: Per-pool `roundrobin`, `random`, or `sticky` (hold N requests per IP)
+- ⚡ **Async Health Checks**: Run health checks against any URL; progress shown in real time
+- ⏱️ **Scheduled Checks**: Cron-style schedule per pool (`*/30 * * * *`)
+- 📤 **Export**: Download pool proxy list as `.txt` or `.csv` (`GET /api/v1/pools/{id}/export?format=txt|csv`)
+- 🔔 **Webhook Alerts**: Per-pool alert rules — fire a POST/GET webhook when active proxy count drops below threshold, with configurable cooldown
+
+### Per-User Pool Authentication
+- 👤 **Proxy Users**: Create users with bcrypt passwords, each assigned a main pool + ordered fallbacks
+- 🔗 **Usage**: `http://user:pass@host:8000` — the proxy routes through the user's pool chain
+- 🔄 **Automatic Failover**: If a pool has no live IPs, requests cascade to fallback pools
+- 🔁 **Retry Logic**: Each retry picks a fresh proxy; failed IPs are excluded for that request
+- 📊 **Full Tracking**: All requests, success rates, and response times tracked per proxy
+- ⚡ **Per-User Rate Limit**: Optional `requests_per_minute` cap per user (0 = unlimited)
+
+### Security
+- 🔐 **JWT Authentication**: All API endpoints require a valid JWT token; the browser auto-redirects to login on expiry with "Session expired" message
+- 🔑 **Bcrypt Admin Credentials**: Dashboard password stored as bcrypt hash in database
+- 🔄 **Change Password**: Update username/password via the Settings UI (requires current password)
+- 🌐 **Public endpoints only**: `GET /health` and `POST /auth/login`
+- 🛡️ **Auth Brute-Force Protection**: Per-IP block after N failed attempts + global lockout when request rate exceeds threshold (all configurable via `.env`)
+- 🏷️ **Proxy Tags**: Label proxies with custom tags for fine-grained pool filtering
+- 🧹 **Dead Proxy Cleanup**: Configurable automatic removal of long-failed or low-quality proxies
+
 ### Web Dashboard
 - 📊 **Real-Time Metrics**: Live statistics, charts, and system monitoring
 - 🔄 **Proxy Management**: Add, edit, delete, and test proxies through the UI
@@ -62,7 +101,7 @@ Whether you're conducting web scraping operations, performing security research,
 
 ### DevOps & Deployment
 - 🐳 **Docker-Native**: Production-ready containerized deployment
-- 🔧 **Easy Configuration**: Environment-based configuration
+- 🔧 **Easy Configuration**: All config via `.env` — see `.env.example` for all options
 - 🏥 **Health Checks**: Built-in health endpoints for monitoring
 - 🛑 **Graceful Shutdown**: Clean shutdown with connection draining
 - 📊 **Observability**: Structured JSON logging and metrics endpoints
@@ -76,14 +115,19 @@ Whether you're conducting web scraping operations, performing security research,
 The fastest way to get Rota up and running:
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/alpkeskin/rota.git
 cd rota
 
-# Start all services (core, dashboard, database)
+# 2. Create your environment file
+cp .env.example .env
+# For local development the defaults work as-is.
+# For production: set NEXT_PUBLIC_API_URL to your public API URL.
+
+# 3. Start all services
 docker compose up -d
 
-# Check service status
+# 4. Check service status
 docker compose ps
 ```
 
@@ -96,6 +140,45 @@ docker compose ps
 **Default credentials for dashboard:**
 - Username: `admin`
 - Password: `admin`
+
+### Configuration
+
+All settings are controlled through a single `.env` file (see `.env.example` for all options with descriptions):
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8001` | Public URL of the API — used by the browser |
+| `PROXY_PORT` | `8000` | Host port for the proxy server |
+| `API_PORT` | `8001` | Host port for the REST API |
+| `DASHBOARD_PORT` | `3000` | Host port for the web dashboard |
+| `ROTA_ADMIN_USER` | `admin` | Initial dashboard username (seeded once) |
+| `ROTA_ADMIN_PASSWORD` | `admin` | Initial dashboard password (seeded once, min 6 chars) |
+| `DB_PASSWORD` | `rota_password` | TimescaleDB password |
+| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `AUTH_IP_MAX_ATTEMPTS` | `10` | Failed login attempts before an IP is blocked |
+| `AUTH_IP_WINDOW_MINUTES` | `10` | Sliding window (minutes) to count per-IP failures |
+| `AUTH_IP_BLOCK_MINUTES` | `30` | How long a blocked IP cannot attempt login |
+| `AUTH_GLOBAL_MAX_PER_MINUTE` | `1000` | Max total login attempts/min across all IPs before global lockout |
+| `AUTH_GLOBAL_LOCKOUT_MINUTES` | `1` | Duration of global login lockout |
+
+> **Note**: `ROTA_ADMIN_USER` and `ROTA_ADMIN_PASSWORD` are only used when the database is empty (first start). After that, use the **Settings → Admin Account** page to change credentials.
+
+### Production Deployment
+
+For production, set at minimum:
+
+```bash
+# .env
+NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+DB_PASSWORD=a-strong-random-password
+ROTA_ADMIN_PASSWORD=a-strong-password
+```
+
+Then rebuild the dashboard (required when changing `NEXT_PUBLIC_API_URL`, as it is baked into the Next.js bundle at build time):
+
+```bash
+docker compose up -d --build
+```
 
 ### Using Docker
 
@@ -143,6 +226,9 @@ npm run dev
 ```bash
 # Route traffic through Rota proxy
 curl -x http://localhost:8000 https://api.ipify.org?format=json
+
+# Per-user pool routing (after creating a Proxy User in the dashboard)
+curl -x http://myuser:mypassword@localhost:8000 https://api.ipify.org?format=json
 
 # Using environment variables
 export HTTP_PROXY=http://localhost:8000
@@ -208,7 +294,6 @@ Rota is built as a modern monorepo with three main components:
 
 ### Rotation Strategies
 
-
 - **Random**: Select a random proxy for each request
 - **Round Robin**: Distribute requests evenly across all proxies
 - **Least Connections**: Route to the proxy with fewest active connections
@@ -229,6 +314,129 @@ docker compose -f docker-compose.yml up -d
 # Enable auto-restart
 docker compose up -d --restart=unless-stopped
 ```
+
+---
+
+## 🗂️ Proxy Sources & Pools
+
+### How Proxy Sources work
+
+1. Go to **Proxy Sources** in the dashboard
+2. Add a URL pointing to a plain-text proxy list (one `ip:port` per line)
+3. Choose the protocol and refresh interval
+4. Click **Fetch Now** or wait for the scheduler
+
+The system will:
+- Download and parse the list
+- Upsert proxies into the database (duplicates ignored)
+- Automatically look up GeoIP data for every new proxy
+- Re-sync all pools that have `Auto-sync` enabled
+
+### Geo Distribution & Pools
+
+After proxies are geolocated, open the **Proxy Pools → Geo Distribution** tab:
+
+- Browse all proxy-holding countries; click a country to expand cities
+- Check individual countries or cities; mix them freely
+- Click **Create Pool from selection** — the pool is created and filled instantly
+
+Pools also support **ISP filters** (substring match, OR logic) and **tag filters** (AND logic — proxy must carry all specified tags). Combine geo + ISP + tags in any combination.
+
+#### Pool Sync Modes
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` | Pool membership is rebuilt automatically after every proxy import or geo-enrichment |
+| `manual` | Membership only changes when you press **Sync** — useful for curated pools |
+
+#### Exporting a Pool
+
+```bash
+# Plain text — one protocol://ip:port per line
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8001/api/v1/pools/{id}/export?format=txt" -o pool.txt
+
+# CSV — with status, geo, ISP, success rate
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8001/api/v1/pools/{id}/export?format=csv" -o pool.csv
+```
+
+#### Webhook Alerts
+
+Add an alert rule to a pool to be notified when the active proxy count drops below a threshold:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  "http://localhost:8001/api/v1/pools/{id}/alert-rules" \
+  -d '{
+    "enabled": true,
+    "min_active_proxies": 10,
+    "webhook_url": "https://hooks.slack.com/...",
+    "cooldown_minutes": 30
+  }'
+```
+
+Payload sent to the webhook:
+```json
+{
+  "event": "pool.degraded",
+  "pool_id": 1,
+  "pool_name": "US Residential",
+  "active_proxies": 3,
+  "total_proxies": 50,
+  "threshold": 10,
+  "fired_at": "2026-04-02T04:30:00Z"
+}
+```
+
+### Per-User Routing
+
+1. Create pools for each location/use-case
+2. Go to **Proxy Users**, click **Add User**
+3. Set a main pool and optional fallback pools (in priority order)
+4. Configure max retries across the chain and an optional `requests_per_minute` cap
+
+Users connect as:
+```
+http://username:password@your-proxy-host:8000
+```
+
+If the main pool has no live IPs the request automatically cascades to the next fallback pool.
+
+---
+
+## 🔐 API Authentication
+
+All API endpoints require a JWT bearer token obtained from `POST /api/v1/auth/login`.
+
+```bash
+# Login
+TOKEN=$(curl -s -X POST http://localhost:8001/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"yourpassword"}' | jq -r '.token')
+
+# Use token
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8001/api/v1/proxies
+```
+
+Public endpoints (no token required):
+- `GET /health`
+- `POST /api/v1/auth/login`
+
+### Brute-Force Protection
+
+The login endpoint has two independent rate-limit mechanisms:
+
+| Mechanism | Trigger | Response |
+|-----------|---------|----------|
+| **Per-IP block** | ≥ `AUTH_IP_MAX_ATTEMPTS` failed attempts from one IP within `AUTH_IP_WINDOW_MINUTES` minutes | `429` — IP blocked for `AUTH_IP_BLOCK_MINUTES` minutes |
+| **Global lockout** | ≥ `AUTH_GLOBAL_MAX_PER_MINUTE` total attempts per minute across all IPs | `429` — login disabled for everyone for `AUTH_GLOBAL_LOCKOUT_MINUTES` minute(s) |
+
+Both responses include a `Retry-After` header. All thresholds are configurable via `.env`.
+
+The dashboard automatically redirects to the login page with a *"Session expired"* message when a `401` response is received.
+
 ---
 
 ## 🤝 Contributing

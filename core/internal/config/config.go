@@ -14,6 +14,17 @@ type Config struct {
 	Database  DatabaseConfig
 	AdminUser string
 	AdminPass string
+
+	// Auth brute-force protection
+	// Per-IP: after AuthIPMaxAttempts failures within AuthIPWindowMinutes,
+	// that IP is blocked for AuthIPBlockMinutes.
+	// Global: if total login attempts across all IPs exceed AuthGlobalMaxPerMinute
+	// in a 1-minute window, the login endpoint is locked for AuthGlobalLockoutMin.
+	AuthIPMaxAttempts      int // failed attempts before IP block       (AUTH_IP_MAX_ATTEMPTS, default 10)
+	AuthIPWindowMinutes    int // sliding window to count attempts      (AUTH_IP_WINDOW_MINUTES, default 10)
+	AuthIPBlockMinutes     int // how long to block an IP               (AUTH_IP_BLOCK_MINUTES, default 30)
+	AuthGlobalMaxPerMinute int // max total attempts/min before lockout (AUTH_GLOBAL_MAX_PER_MINUTE, default 1000)
+	AuthGlobalLockoutMin   int // global lockout duration in minutes    (AUTH_GLOBAL_LOCKOUT_MINUTES, default 1)
 }
 
 // DatabaseConfig holds database configuration
@@ -50,6 +61,12 @@ func Load() (*Config, error) {
 		},
 		AdminUser: getEnv("ROTA_ADMIN_USER", "admin"),
 		AdminPass: getEnv("ROTA_ADMIN_PASSWORD", "admin"),
+
+		AuthIPMaxAttempts:      getEnvAsInt("AUTH_IP_MAX_ATTEMPTS", 10),
+		AuthIPWindowMinutes:    getEnvAsInt("AUTH_IP_WINDOW_MINUTES", 10),
+		AuthIPBlockMinutes:     getEnvAsInt("AUTH_IP_BLOCK_MINUTES", 30),
+		AuthGlobalMaxPerMinute: getEnvAsInt("AUTH_GLOBAL_MAX_PER_MINUTE", 1000),
+		AuthGlobalLockoutMin:   getEnvAsInt("AUTH_GLOBAL_LOCKOUT_MINUTES", 1),
 	}
 
 	if err := cfg.Validate(); err != nil {

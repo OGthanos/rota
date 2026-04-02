@@ -129,8 +129,9 @@ docker compose ps
 - 🌐 **Dashboard**: http://localhost:3000
 - 🔧 **API**: http://localhost:8001
 - 🔄 **Proxy**: http://localhost:8000
+- 🗄️ **Database**: localhost:5432
 
-**Default dashboard credentials** (change after first login via Settings → Admin Account):
+**Default credentials for dashboard:**
 - Username: `admin`
 - Password: `admin`
 
@@ -170,11 +171,13 @@ docker compose up -d --build
 
 ### Using Docker
 
-Pull and run the core service standalone:
+Pull and run the core service:
 
 ```bash
+# Pull from GitHub Container Registry
 docker pull ghcr.io/alpkeskin/rota:latest
 
+# Run with basic configuration
 docker run -d \
   --name rota-core \
   -p 8000:8000 \
@@ -188,39 +191,38 @@ docker run -d \
 ### From Source
 
 ```bash
-# Prerequisites: Go 1.25.3+, Node.js 20+, pnpm, TimescaleDB 2.22+
+# Prerequisites: Go 1.25.3+, Node.js 20+, PostgreSQL 16+ with TimescaleDB
 
 # Clone the repository
 git clone https://github.com/alpkeskin/rota.git
 cd rota
 
-# Copy and configure environment
-cp .env.example .env
-# Edit .env as needed
-
-# Start Core (Go API + proxy server)
+# Start Core
 cd core
-go run ./cmd/server/main.go
+cp .env .env.local  # Configure your environment
+make install
+make dev
 
-# Start Dashboard (in a new terminal)
+# Start Dashboard (in new terminal)
 cd dashboard
-pnpm install
-NEXT_PUBLIC_API_URL=http://localhost:8001 pnpm dev
+npm install
+cp .env.local .env.local  # Configure API URL
+npm run dev
 ```
 
 ### Testing the Proxy
 
 ```bash
-# Anonymous (global pool)
-curl -x http://localhost:8000 https://api.ipify.org
+# Route traffic through Rota proxy
+curl -x http://localhost:8000 https://api.ipify.org?format=json
 
 # Per-user pool routing (after creating a Proxy User in the dashboard)
-curl -x http://myuser:mypassword@localhost:8000 https://api.ipify.org
+curl -x http://myuser:mypassword@localhost:8000 https://api.ipify.org?format=json
 
-# Environment variables
+# Using environment variables
 export HTTP_PROXY=http://localhost:8000
 export HTTPS_PROXY=http://localhost:8000
-curl https://api.ipify.org
+curl https://api.ipify.org?format=json
 ```
 
 ---
@@ -285,6 +287,22 @@ Rota is built as a modern monorepo with three main components:
 - **Round Robin**: Distribute requests evenly across all proxies
 - **Least Connections**: Route to the proxy with fewest active connections
 - **Time-Based**: Rotate proxies at fixed intervals
+
+---
+
+## 🐳 Deployment
+
+### Production Deployment
+
+#### Using Docker Compose
+
+```bash
+# Production configuration
+docker compose -f docker-compose.yml up -d
+
+# Enable auto-restart
+docker compose up -d --restart=unless-stopped
+```
 
 ---
 

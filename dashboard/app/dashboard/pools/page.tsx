@@ -4,11 +4,13 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import {
   Plus, Trash2, RefreshCw,
   Pencil, Loader2, Layers, ShieldCheck, Globe,
+  Download, Bell, BellOff, Tag,
 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import {
   ProxyPool, PoolProxy, GeoSummaryItem, HCJob, CreatePoolRequest,
+  PoolAlertRule, CreatePoolAlertRuleRequest,
 } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -56,7 +58,10 @@ const DEFAULT_POOL_FORM: CreatePoolRequest = {
   health_check_cron: "*/30 * * * *",
   health_check_enabled: true,
   auto_sync: true,
+  sync_mode: "auto",
   enabled: true,
+  isp_filters: [],
+  tag_filters: [],
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -84,6 +89,15 @@ export default function PoolsPage() {
   const [editPool, setEditPool] = useState<ProxyPool | null>(null)
   const [form, setForm] = useState<CreatePoolRequest>(DEFAULT_POOL_FORM)
   const [saving, setSaving] = useState(false)
+
+  // Alert rules
+  const [alertRules, setAlertRules] = useState<PoolAlertRule[]>([])
+  const [alertDialogOpen, setAlertDialogOpen] = useState(false)
+  const [alertForm, setAlertForm] = useState<CreatePoolAlertRuleRequest>({
+    enabled: true, min_active_proxies: 5, webhook_url: "", webhook_method: "POST", cooldown_minutes: 30,
+  })
+  const [editAlertRule, setEditAlertRule] = useState<PoolAlertRule | null>(null)
+  const [savingAlert, setSavingAlert] = useState(false)
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -123,7 +137,11 @@ export default function PoolsPage() {
       health_check_cron: p.health_check_cron,
       health_check_enabled: p.health_check_enabled,
       auto_sync: p.auto_sync,
+      sync_mode: p.sync_mode ?? "auto",
       enabled: p.enabled,
+      geo_filters: p.geo_filters ?? [],
+      isp_filters: p.isp_filters ?? [],
+      tag_filters: p.tag_filters ?? [],
     })
     setDialogOpen(true)
   }
@@ -165,12 +183,72 @@ export default function PoolsPage() {
     setHcJob(null)
     setPoolProxiesLoading(true)
     try {
-      const res = await api.getPoolProxies(pool.id)
-      setPoolProxies(res.proxies)
+      const [proxiesRes, rules] = await Promise.all([
+        api.getPoolProxies(pool.id),
+        api.getAlertRules(pool.id).catch(() => []),
+      ])
+      setPoolProxies(proxiesRes.proxies)
+      setAlertRules(rules)
     } catch {
       toast.error("Failed to load pool proxies")
     } finally {
       setPoolProxiesLoading(false)
+    }
+  }
+
+  const handleExport = (format: "txt" | "csv") => {
+    if (!selectedPool) return
+    const url = api.getPoolExportUrl(selectedPool.id, format)
+    window.open(url, "_blank")
+  }
+
+  const openCreateAlertRule = () => {
+    setEditAlertRule(null)
+    setAlertForm({ enabled: true, min_active_proxies: 5, webhook_url: "", webhook_method: "POST", cooldown_minutes: 30 })
+    setAlertDialogOpen(true)
+  }
+
+  const openEditAlertRule = (rule: PoolAlertRule) => {
+    setEditAlertRule(rule)
+    setAlertForm({
+      enabled: rule.enabled,
+      min_active_proxies: rule.min_active_proxies,
+      webhook_url: rule.webhook_url,
+      webhook_method: rule.webhook_method,
+      cooldown_minutes: rule.cooldown_minutes,
+    })
+    setAlertDialogOpen(true)
+  }
+
+  const handleSaveAlertRule = async () => {
+    if (!selectedPool) return
+    setSavingAlert(true)
+    try {
+      if (editAlertRule) {
+        await api.updateAlertRule(selectedPool.id, editAlertRule.id, alertForm)
+        toast.success("Alert rule updated")
+      } else {
+        await api.createAlertRule(selectedPool.id, alertForm)
+        toast.success("Alert rule created")
+      }
+      setAlertDialogOpen(false)
+      const rules = await api.getAlertRules(selectedPool.id)
+      setAlertRules(rules)
+    } catch {
+      toast.error("Failed to save alert rule")
+    } finally {
+      setSavingAlert(false)
+    }
+  }
+
+  const handleDeleteAlertRule = async (ruleId: number) => {
+    if (!selectedPool || !confirm("Delete this alert rule?")) return
+    try {
+      await api.deleteAlertRule(selectedPool.id, ruleId)
+      setAlertRules(prev => prev.filter(r => r.id !== ruleId))
+      toast.success("Alert rule deleted")
+    } catch {
+      toast.error("Failed to delete alert rule")
     }
   }
 
@@ -369,6 +447,22 @@ export default function PoolsPage() {
                             Check
                           </Button>
                           <Button
+                            variant="outline" size="sm"
+                            onClick={() => handleExport("txt")}
+                            title="Export as TXT"
+                          >
+                            <Download className="h-3 w-3 mr-1" />
+                            TXT
+                          </Button>
+                          <Button
+                            variant="outline" size="sm"
+                            onClick={() => handleExport("csv")}
+                            title="Export as CSV"
+                          >
+                            <Download className="h-3 w-3 mr-1" />
+                            CSV
+                          </Button>
+                          <Button
                             variant="ghost" size="icon"
                             onClick={() => openEdit(selectedPool)}
                           >
@@ -384,12 +478,29 @@ export default function PoolsPage() {
                         </div>
                       </div>
                       <CardDescription className="text-xs space-y-0.5">
-                        <div>Rotation: <strong>{ROTATION_LABELS[selectedPool.rotation_method]}</strong>
-                          {selectedPool.rotation_method === "stick" && ` (every ${selectedPool.stick_count} req)`}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>Rotation: <strong>{ROTATION_LABELS[selectedPool.rotation_method]}</strong>
+                            {selectedPool.rotation_method === "stick" && ` (every ${selectedPool.stick_count} req)`}
+                          </span>
+                          <Badge variant={selectedPool.sync_mode === "manual" ? "secondary" : "outline"} className="text-xs">
+                            {selectedPool.sync_mode === "manual" ? "manual sync" : "auto sync"}
+                          </Badge>
                         </div>
                         <div>Health check: <code className="text-xs bg-muted px-1 rounded">{selectedPool.health_check_cron}</code>
                           {" → "}<span className="text-muted-foreground">{selectedPool.health_check_url}</span>
                         </div>
+                        {(selectedPool.isp_filters?.length ?? 0) > 0 && (
+                          <div className="flex gap-1 flex-wrap">
+                            <span className="text-muted-foreground">ISP:</span>
+                            {selectedPool.isp_filters!.map(i => <Badge key={i} variant="outline" className="text-xs">{i}</Badge>)}
+                          </div>
+                        )}
+                        {(selectedPool.tag_filters?.length ?? 0) > 0 && (
+                          <div className="flex gap-1 flex-wrap">
+                            <Tag className="h-3 w-3 text-muted-foreground" />
+                            {selectedPool.tag_filters!.map(t => <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>)}
+                          </div>
+                        )}
                       </CardDescription>
                     </CardHeader>
                     {hcJob && (
@@ -483,6 +594,57 @@ export default function PoolsPage() {
                               ))}
                             </TableBody>
                           </Table>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Alert Rules */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm flex items-center gap-1">
+                          <Bell className="h-3.5 w-3.5" />
+                          Alert Rules ({alertRules.length})
+                        </CardTitle>
+                        <Button size="sm" variant="outline" onClick={openCreateAlertRule}>
+                          <Plus className="h-3 w-3 mr-1" />Add Rule
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      {alertRules.length === 0 ? (
+                        <p className="text-center py-4 text-xs text-muted-foreground">
+                          No alert rules. Add one to get notified when proxy count drops.
+                        </p>
+                      ) : (
+                        <div className="divide-y">
+                          {alertRules.map(rule => (
+                            <div key={rule.id} className="flex items-center justify-between px-4 py-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                {rule.enabled
+                                  ? <Bell className="h-3 w-3 text-yellow-500" />
+                                  : <BellOff className="h-3 w-3 text-muted-foreground" />
+                                }
+                                <span className="font-mono truncate max-w-[160px]" title={rule.webhook_url}>
+                                  {rule.webhook_url}
+                                </span>
+                                <Badge variant="outline" className="text-xs">
+                                  &lt; {rule.min_active_proxies} active
+                                </Badge>
+                              </div>
+                              <div className="flex gap-1">
+                                <Button variant="ghost" size="icon" className="h-6 w-6"
+                                  onClick={() => openEditAlertRule(rule)}>
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500"
+                                  onClick={() => handleDeleteAlertRule(rule.id)}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </CardContent>
@@ -622,7 +784,15 @@ export default function PoolsPage() {
                   checked={form.auto_sync}
                   onCheckedChange={v => setForm({ ...form, auto_sync: v })}
                 />
-                <Label htmlFor="auto-sync">Auto-sync membership by geo filters</Label>
+                <Label htmlFor="auto-sync">Auto-sync membership on import</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="sync-manual"
+                  checked={form.sync_mode === "manual"}
+                  onCheckedChange={v => setForm({ ...form, sync_mode: v ? "manual" : "auto" })}
+                />
+                <Label htmlFor="sync-manual">Manual sync mode (don&apos;t auto-rebuild on import)</Label>
               </div>
               <div className="flex items-center gap-2">
                 <Switch
@@ -644,6 +814,61 @@ export default function PoolsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Alert Rule Dialog */}
+      <Dialog open={alertDialogOpen} onOpenChange={setAlertDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editAlertRule ? "Edit Alert Rule" : "New Alert Rule"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Webhook URL</Label>
+              <Input
+                placeholder="https://hooks.slack.com/..."
+                value={alertForm.webhook_url}
+                onChange={e => setAlertForm({ ...alertForm, webhook_url: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Min Active Proxies</Label>
+                <Input
+                  type="number" min={1}
+                  value={alertForm.min_active_proxies}
+                  onChange={e => setAlertForm({ ...alertForm, min_active_proxies: parseInt(e.target.value) || 1 })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">Fire when active drops below this</p>
+              </div>
+              <div>
+                <Label className="text-xs">Cooldown (minutes)</Label>
+                <Input
+                  type="number" min={1}
+                  value={alertForm.cooldown_minutes}
+                  onChange={e => setAlertForm({ ...alertForm, cooldown_minutes: parseInt(e.target.value) || 30 })}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={alertForm.enabled}
+                onCheckedChange={v => setAlertForm({ ...alertForm, enabled: v })}
+              />
+              <Label className="text-xs">Enabled</Label>
+            </div>
+            <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+              <strong>Payload sent:</strong><br />
+              {"{ event: \"pool.degraded\", pool_id, pool_name, active_proxies, total_proxies, threshold, fired_at }"}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAlertDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveAlertRule} disabled={savingAlert}>
+              {savingAlert && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              {editAlertRule ? "Save" : "Create Rule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   )

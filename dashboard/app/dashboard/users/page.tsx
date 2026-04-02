@@ -34,6 +34,7 @@ const DEFAULT_FORM: CreateProxyUserRequest = {
   main_pool_id: null,
   fallback_pool_ids: [],
   max_retries: 5,
+  requests_per_minute: 0,
 }
 
 export default function UsersPage() {
@@ -86,6 +87,7 @@ export default function UsersPage() {
       main_pool_id: u.main_pool_id ?? null,
       fallback_pool_ids: u.fallback_pool_ids ?? [],
       max_retries: u.max_retries,
+      requests_per_minute: u.requests_per_minute ?? 0,
     })
     setShowPass(false)
     setDialogOpen(true)
@@ -102,6 +104,7 @@ export default function UsersPage() {
           main_pool_id: form.main_pool_id,
           fallback_pool_ids: form.fallback_pool_ids,
           max_retries: form.max_retries,
+          requests_per_minute: form.requests_per_minute,
         }
         if (form.password) upd.password = form.password
         await api.updateProxyUser(editUser.id, upd)
@@ -246,6 +249,7 @@ export default function UsersPage() {
                   <TableHead>Main Pool</TableHead>
                   <TableHead>Fallback Pools</TableHead>
                   <TableHead>Max Retries</TableHead>
+                  <TableHead>Rate Limit</TableHead>
                   <TableHead>Enabled</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -276,6 +280,11 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell>
                       <span className="font-semibold">{u.max_retries}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-xs text-muted-foreground">
+                        {u.requests_per_minute > 0 ? `${u.requests_per_minute}/min` : "∞"}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <Switch checked={u.enabled} onCheckedChange={() => toggleEnabled(u)} />
@@ -428,6 +437,19 @@ export default function UsersPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Each retry picks a different IP. Failed IPs are excluded from subsequent retries within the same request.
+              </p>
+            </div>
+            {/* Rate limit */}
+            <div className="flex flex-col gap-1.5">
+              <Label>Rate limit (requests/minute)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.requests_per_minute ?? 0}
+                onChange={e => setForm({ ...form, requests_per_minute: parseInt(e.target.value) || 0 })}
+              />
+              <p className="text-xs text-muted-foreground">
+                0 = no limit. When exceeded, proxy returns 429.
               </p>
             </div>
 

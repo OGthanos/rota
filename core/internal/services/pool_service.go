@@ -83,28 +83,28 @@ func (ps *PoolService) runScheduledHealthChecks(ctx context.Context) {
 	}
 }
 
-// runAutoSync re-builds membership of auto_sync pools from geo
+// runAutoSync re-builds membership of auto_sync pools from geo/isp/tag filters
 func (ps *PoolService) runAutoSync(ctx context.Context) {
 	pools, err := ps.poolRepo.List(ctx)
 	if err != nil {
 		return
 	}
 	for _, pool := range pools {
-		if pool.AutoSync && pool.Enabled {
-			if _, err := ps.poolRepo.SyncPoolByGeo(ctx, pool); err != nil {
+		if pool.AutoSync && pool.Enabled && pool.SyncMode != "manual" {
+			if _, err := ps.poolRepo.SyncPoolByFilters(ctx, pool); err != nil {
 				ps.logger.Warn("auto-sync pool failed", "pool_id", pool.ID, "error", err)
 			}
 		}
 	}
 }
 
-// SyncPool re-builds the membership of a single pool from its geo filters
+// SyncPool re-builds the membership of a single pool from all its filters (geo+isp+tag)
 func (ps *PoolService) SyncPool(ctx context.Context, poolID int) (int, error) {
 	pool, err := ps.poolRepo.GetByID(ctx, poolID)
 	if err != nil || pool == nil {
 		return 0, fmt.Errorf("pool not found")
 	}
-	return ps.poolRepo.SyncPoolByGeo(ctx, *pool)
+	return ps.poolRepo.SyncPoolByFilters(ctx, *pool)
 }
 
 // HealthCheckPool tests all proxies in a pool against the pool's custom URL

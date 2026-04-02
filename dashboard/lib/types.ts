@@ -222,12 +222,37 @@ export interface ProxyPool {
   health_check_cron: string
   health_check_enabled: boolean
   auto_sync: boolean
+  sync_mode: "auto" | "manual"
   enabled: boolean
   total_proxies: number
   active_proxies: number
   failed_proxies: number
+  geo_filters?: GeoFilter[]
+  isp_filters?: string[]
+  tag_filters?: string[]
   created_at: string
   updated_at: string
+}
+
+export interface PoolAlertRule {
+  id: number
+  pool_id: number
+  enabled: boolean
+  min_active_proxies: number
+  webhook_url: string
+  webhook_method: "POST" | "GET"
+  last_fired_at?: string
+  cooldown_minutes: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePoolAlertRuleRequest {
+  enabled: boolean
+  min_active_proxies: number
+  webhook_url: string
+  webhook_method?: "POST" | "GET"
+  cooldown_minutes?: number
 }
 
 export interface PoolProxy {
@@ -308,6 +333,7 @@ export interface ProxyUser {
   main_pool_name?: string
   fallback_pool_ids: number[]
   max_retries: number
+  requests_per_minute: number
   created_at: string
   updated_at: string
 }
@@ -319,6 +345,7 @@ export interface CreateProxyUserRequest {
   main_pool_id?: number | null
   fallback_pool_ids: number[]
   max_retries: number
+  requests_per_minute?: number
 }
 
 export interface UpdateProxyUserRequest {
@@ -327,6 +354,7 @@ export interface UpdateProxyUserRequest {
   main_pool_id?: number | null
   fallback_pool_ids?: number[]
   max_retries?: number
+  requests_per_minute?: number
 }
 
 export interface CreatePoolRequest {
@@ -336,11 +364,26 @@ export interface CreatePoolRequest {
   region_name?: string
   city_name?: string
   geo_filters?: GeoFilter[]
+  isp_filters?: string[]
+  tag_filters?: string[]
   rotation_method: "roundrobin" | "random" | "stick"
   stick_count: number
   health_check_url?: string
   health_check_cron?: string
   health_check_enabled: boolean
   auto_sync: boolean
+  sync_mode?: "auto" | "manual"
   enabled: boolean
+}
+
+export interface ProxyWithTags {
+  id: number
+  address: string
+  protocol: string
+  status: string
+  tags: string[]
+  country_code?: string
+  country_name?: string
+  city_name?: string
+  isp?: string
 }

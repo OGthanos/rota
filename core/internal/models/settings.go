@@ -9,6 +9,7 @@ type Settings struct {
 	RateLimit      RateLimitSettings      `json:"rate_limit"`
 	HealthCheck    HealthCheckSettings    `json:"healthcheck"`
 	LogRetention   LogRetentionSettings   `json:"log_retention"`
+	ProxyCleanup   ProxyCleanupSettings   `json:"proxy_cleanup"`
 }
 
 // AuthenticationSettings represents proxy server authentication configuration
@@ -62,6 +63,14 @@ type LogRetentionSettings struct {
 	RetentionDays        int  `json:"retention_days"`         // Days to keep logs (7, 15, 30, 60, 90)
 	CompressionAfterDays int  `json:"compression_after_days"` // Compress logs older than X days (1, 3, 7, 14)
 	CleanupIntervalHours int  `json:"cleanup_interval_hours"` // How often to run cleanup (1, 6, 12, 24)
+}
+
+// ProxyCleanupSettings represents dead proxy auto-removal configuration
+type ProxyCleanupSettings struct {
+	Enabled              bool    `json:"enabled"`                // Enable automatic dead proxy cleanup
+	MaxFailedDays        int     `json:"max_failed_days"`        // Remove proxies failed for more than N days
+	MinSuccessRate       float64 `json:"min_success_rate"`       // Remove proxies with success rate below X% (0 = disabled)
+	CleanupIntervalHours int     `json:"cleanup_interval_hours"` // How often to run cleanup
 }
 
 // SettingRecord represents a settings database record

@@ -25,6 +25,8 @@ import {
   ProxyUser,
   CreateProxyUserRequest,
   UpdateProxyUserRequest,
+  PoolAlertRule,
+  CreatePoolAlertRuleRequest,
 } from "./types"
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
@@ -431,6 +433,49 @@ class ApiClient {
 
   async deleteProxyUser(id: number): Promise<void> {
     return this.request(`/api/v1/proxy-users/${id}`, { method: "DELETE" })
+  }
+
+  // ── Pool Export ──────────────────────────────────────────────────────────
+  getPoolExportUrl(poolId: number, format: "txt" | "csv" = "txt"): string {
+    const base = typeof window !== "undefined" ? window.location.origin : API_BASE_URL
+    const token = this.token
+    return `${base}/api/v1/pools/${poolId}/export?format=${format}${token ? `&token=${token}` : ""}`
+  }
+
+  // ── Alert Rules ──────────────────────────────────────────────────────────
+  async getAlertRules(poolId: number): Promise<PoolAlertRule[]> {
+    const data = await this.request<{ rules: PoolAlertRule[] }>(`/api/v1/pools/${poolId}/alert-rules`)
+    return data.rules
+  }
+
+  async createAlertRule(poolId: number, req: CreatePoolAlertRuleRequest): Promise<PoolAlertRule> {
+    return this.request(`/api/v1/pools/${poolId}/alert-rules`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    })
+  }
+
+  async updateAlertRule(poolId: number, ruleId: number, req: CreatePoolAlertRuleRequest): Promise<PoolAlertRule> {
+    return this.request(`/api/v1/pools/${poolId}/alert-rules/${ruleId}`, {
+      method: "PUT",
+      body: JSON.stringify(req),
+    })
+  }
+
+  async deleteAlertRule(poolId: number, ruleId: number): Promise<void> {
+    return this.request(`/api/v1/pools/${poolId}/alert-rules/${ruleId}`, { method: "DELETE" })
+  }
+
+  // ── ISP / Tag lists ──────────────────────────────────────────────────────
+  async getISPList(q?: string): Promise<string[]> {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : ""
+    const data = await this.request<{ isps: string[] }>(`/api/v1/pools/isp-list${qs}`)
+    return data.isps
+  }
+
+  async getTagList(): Promise<string[]> {
+    const data = await this.request<{ tags: string[] }>("/api/v1/pools/tag-list")
+    return data.tags
   }
 
   // WebSocket connections

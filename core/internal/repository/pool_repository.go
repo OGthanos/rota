@@ -19,16 +19,40 @@ func NewPoolRepository(db *database.DB) *PoolRepository {
 	return &PoolRepository{db: db}
 }
 
+// GetDB returns the underlying database instance (for direct queries in handlers)
+func (r *PoolRepository) GetDB() *database.DB {
+	return r.db
+}
+
+// poolColumns is the canonical SELECT column list (without aggregates)
+const poolColumns = `
+	pp.id, pp.name, pp.description,
+	pp.country_code, pp.region_name, pp.city_name,
+	pp.rotation_method, pp.stick_count,
+	pp.health_check_url, pp.health_check_cron, pp.health_check_enabled,
+	pp.auto_sync, COALESCE(pp.sync_mode,'auto') AS sync_mode, pp.enabled,
+	pp.created_at, pp.updated_at
+`
+
+// scanPool scans the pool columns (without aggregates)
+func scanPool(row interface {
+	Scan(...interface{}) error
+}, pool *models.ProxyPool) error {
+	return row.Scan(
+		&pool.ID, &pool.Name, &pool.Description,
+		&pool.CountryCode, &pool.RegionName, &pool.CityName,
+		&pool.RotationMethod, &pool.StickCount,
+		&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
+		&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
+		&pool.CreatedAt, &pool.UpdatedAt,
+	)
+}
+
 // List returns all pools with computed proxy counts
 func (r *PoolRepository) List(ctx context.Context) ([]models.ProxyPool, error) {
 	query := `
 		SELECT
-			pp.id, pp.name, pp.description,
-			pp.country_code, pp.region_name, pp.city_name,
-			pp.rotation_method, pp.stick_count,
-			pp.health_check_url, pp.health_check_cron, pp.health_check_enabled,
-			pp.auto_sync, pp.enabled,
-			pp.created_at, pp.updated_at,
+			` + poolColumns + `,
 			COUNT(ppm.proxy_id)                                              AS total,
 			COUNT(ppm.proxy_id) FILTER (WHERE p.status = 'active')          AS active,
 			COUNT(ppm.proxy_id) FILTER (WHERE p.status = 'failed')          AS failed
@@ -52,7 +76,7 @@ func (r *PoolRepository) List(ctx context.Context) ([]models.ProxyPool, error) {
 			&pool.CountryCode, &pool.RegionName, &pool.CityName,
 			&pool.RotationMethod, &pool.StickCount,
 			&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
-			&pool.AutoSync, &pool.Enabled,
+			&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
 			&pool.CreatedAt, &pool.UpdatedAt,
 			&pool.TotalProxies, &pool.ActiveProxies, &pool.FailedProxies,
 		)
@@ -71,12 +95,7 @@ func (r *PoolRepository) List(ctx context.Context) ([]models.ProxyPool, error) {
 func (r *PoolRepository) GetByID(ctx context.Context, id int) (*models.ProxyPool, error) {
 	query := `
 		SELECT
-			pp.id, pp.name, pp.description,
-			pp.country_code, pp.region_name, pp.city_name,
-			pp.rotation_method, pp.stick_count,
-			pp.health_check_url, pp.health_check_cron, pp.health_check_enabled,
-			pp.auto_sync, pp.enabled,
-			pp.created_at, pp.updated_at,
+			` + poolColumns + `,
 			COUNT(ppm.proxy_id)                                              AS total,
 			COUNT(ppm.proxy_id) FILTER (WHERE p.status = 'active')          AS active,
 			COUNT(ppm.proxy_id) FILTER (WHERE p.status = 'failed')          AS failed
@@ -92,7 +111,7 @@ func (r *PoolRepository) GetByID(ctx context.Context, id int) (*models.ProxyPool
 		&pool.CountryCode, &pool.RegionName, &pool.CityName,
 		&pool.RotationMethod, &pool.StickCount,
 		&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
-		&pool.AutoSync, &pool.Enabled,
+		&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
 		&pool.CreatedAt, &pool.UpdatedAt,
 		&pool.TotalProxies, &pool.ActiveProxies, &pool.FailedProxies,
 	)
@@ -111,11 +130,11 @@ func (r *PoolRepository) Create(ctx context.Context, req models.CreatePoolReques
 		INSERT INTO proxy_pools
 			(name, description, country_code, region_name, city_name,
 			 rotation_method, stick_count, health_check_url, health_check_cron,
-			 health_check_enabled, auto_sync, enabled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			 health_check_enabled, auto_sync, sync_mode, enabled)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING id, name, description, country_code, region_name, city_name,
 		          rotation_method, stick_count, health_check_url, health_check_cron,
-		          health_check_enabled, auto_sync, enabled, created_at, updated_at
+		          health_check_enabled, auto_sync, COALESCE(sync_mode,'auto'), enabled, created_at, updated_at
 	`
 	hcURL := req.HealthCheckURL
 	if hcURL == "" {
@@ -129,18 +148,22 @@ func (r *PoolRepository) Create(ctx context.Context, req models.CreatePoolReques
 	if sc < 1 {
 		sc = 10
 	}
+	syncMode := req.SyncMode
+	if syncMode == "" {
+		syncMode = "auto"
+	}
 
 	var pool models.ProxyPool
 	err := r.db.Pool.QueryRow(ctx, query,
 		req.Name, req.Description, req.CountryCode, req.RegionName, req.CityName,
 		req.RotationMethod, sc, hcURL, hcCron,
-		req.HealthCheckEnabled, req.AutoSync, req.Enabled,
+		req.HealthCheckEnabled, req.AutoSync, syncMode, req.Enabled,
 	).Scan(
 		&pool.ID, &pool.Name, &pool.Description,
 		&pool.CountryCode, &pool.RegionName, &pool.CityName,
 		&pool.RotationMethod, &pool.StickCount,
 		&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
-		&pool.AutoSync, &pool.Enabled,
+		&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
 		&pool.CreatedAt, &pool.UpdatedAt,
 	)
 	if err != nil {
@@ -164,24 +187,25 @@ func (r *PoolRepository) Update(ctx context.Context, id int, req models.UpdatePo
 			health_check_cron   = CASE WHEN $9 <> '' THEN $9 ELSE health_check_cron END,
 			health_check_enabled= COALESCE($10, health_check_enabled),
 			auto_sync           = COALESCE($11, auto_sync),
-			enabled             = COALESCE($12, enabled),
+			sync_mode           = CASE WHEN $12 <> '' THEN $12 ELSE sync_mode END,
+			enabled             = COALESCE($13, enabled),
 			updated_at          = NOW()
-		WHERE id = $13
+		WHERE id = $14
 		RETURNING id, name, description, country_code, region_name, city_name,
 		          rotation_method, stick_count, health_check_url, health_check_cron,
-		          health_check_enabled, auto_sync, enabled, created_at, updated_at
+		          health_check_enabled, auto_sync, COALESCE(sync_mode,'auto'), enabled, created_at, updated_at
 	`
 	var pool models.ProxyPool
 	err := r.db.Pool.QueryRow(ctx, query,
 		req.Name, req.Description, req.CountryCode, req.RegionName, req.CityName,
 		req.RotationMethod, req.StickCount, req.HealthCheckURL, req.HealthCheckCron,
-		req.HealthCheckEnabled, req.AutoSync, req.Enabled, id,
+		req.HealthCheckEnabled, req.AutoSync, req.SyncMode, req.Enabled, id,
 	).Scan(
 		&pool.ID, &pool.Name, &pool.Description,
 		&pool.CountryCode, &pool.RegionName, &pool.CityName,
 		&pool.RotationMethod, &pool.StickCount,
 		&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
-		&pool.AutoSync, &pool.Enabled,
+		&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
 		&pool.CreatedAt, &pool.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -410,7 +434,7 @@ func (r *PoolRepository) GetCitiesByCountry(ctx context.Context, countryCode str
 	return result, nil
 }
 
-// SyncAllAutoSyncPools syncs every enabled auto_sync pool - used after mass proxy import
+// SyncAllAutoSyncPools syncs every enabled auto_sync pool (sync_mode=auto) - used after mass proxy import
 func (r *PoolRepository) SyncAllAutoSyncPools(ctx context.Context) (int, error) {
 	pools, err := r.List(ctx)
 	if err != nil {
@@ -418,8 +442,8 @@ func (r *PoolRepository) SyncAllAutoSyncPools(ctx context.Context) (int, error) 
 	}
 	synced := 0
 	for _, pool := range pools {
-		if pool.AutoSync && pool.Enabled {
-			if _, err := r.SyncPoolByGeo(ctx, pool); err == nil {
+		if pool.AutoSync && pool.Enabled && pool.SyncMode != "manual" {
+			if _, err := r.SyncPoolByFilters(ctx, pool); err == nil {
 				synced++
 			}
 		}
@@ -502,7 +526,7 @@ func (r *PoolRepository) GetAllEnabledWithHC(ctx context.Context) ([]models.Prox
 	query := `
 		SELECT id, name, description, country_code, region_name, city_name,
 		       rotation_method, stick_count, health_check_url, health_check_cron,
-		       health_check_enabled, auto_sync, enabled, created_at, updated_at
+		       health_check_enabled, auto_sync, COALESCE(sync_mode,'auto'), enabled, created_at, updated_at
 		FROM proxy_pools
 		WHERE enabled = true AND health_check_enabled = true
 	`
@@ -520,7 +544,7 @@ func (r *PoolRepository) GetAllEnabledWithHC(ctx context.Context) ([]models.Prox
 			&pool.CountryCode, &pool.RegionName, &pool.CityName,
 			&pool.RotationMethod, &pool.StickCount,
 			&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
-			&pool.AutoSync, &pool.Enabled,
+			&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
 			&pool.CreatedAt, &pool.UpdatedAt,
 		)
 		if err != nil {
@@ -529,4 +553,312 @@ func (r *PoolRepository) GetAllEnabledWithHC(ctx context.Context) ([]models.Prox
 		pools = append(pools, pool)
 	}
 	return pools, nil
+}
+
+// --- ISP Filters ---
+
+// GetISPFilters returns all ISP filters for a pool
+func (r *PoolRepository) GetISPFilters(ctx context.Context, poolID int) ([]string, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT isp FROM pool_isp_filters WHERE pool_id=$1 ORDER BY isp`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var isps []string
+	for rows.Next() {
+		var isp string
+		if err := rows.Scan(&isp); err != nil {
+			return nil, err
+		}
+		isps = append(isps, isp)
+	}
+	return isps, nil
+}
+
+// SetISPFilters replaces all ISP filters for a pool
+func (r *PoolRepository) SetISPFilters(ctx context.Context, poolID int, isps []string) error {
+	if _, err := r.db.Pool.Exec(ctx, `DELETE FROM pool_isp_filters WHERE pool_id=$1`, poolID); err != nil {
+		return err
+	}
+	for _, isp := range isps {
+		if _, err := r.db.Pool.Exec(ctx,
+			`INSERT INTO pool_isp_filters (pool_id, isp) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+			poolID, isp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- Tag Filters ---
+
+// GetTagFilters returns all tag filters for a pool
+func (r *PoolRepository) GetTagFilters(ctx context.Context, poolID int) ([]string, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT tag FROM pool_tag_filters WHERE pool_id=$1 ORDER BY tag`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	return tags, nil
+}
+
+// SetTagFilters replaces all tag filters for a pool
+func (r *PoolRepository) SetTagFilters(ctx context.Context, poolID int, tags []string) error {
+	if _, err := r.db.Pool.Exec(ctx, `DELETE FROM pool_tag_filters WHERE pool_id=$1`, poolID); err != nil {
+		return err
+	}
+	for _, tag := range tags {
+		if _, err := r.db.Pool.Exec(ctx,
+			`INSERT INTO pool_tag_filters (pool_id, tag) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+			poolID, tag); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SyncPoolByFilters rebuilds pool membership using geo + ISP + tag filters combined
+func (r *PoolRepository) SyncPoolByFilters(ctx context.Context, pool models.ProxyPool) (int, error) {
+	// Skip sync if sync_mode is manual
+	if pool.SyncMode == "manual" {
+		return 0, nil
+	}
+
+	geoFilters, err := r.GetGeoFilters(ctx, pool.ID)
+	if err != nil {
+		return 0, err
+	}
+	// Fall back to legacy single country/city
+	if len(geoFilters) == 0 && pool.CountryCode != nil && *pool.CountryCode != "" {
+		geoFilters = []models.GeoFilter{{CountryCode: *pool.CountryCode}}
+		if pool.CityName != nil {
+			geoFilters[0].CityName = *pool.CityName
+		}
+	}
+
+	ispFilters, err := r.GetISPFilters(ctx, pool.ID)
+	if err != nil {
+		return 0, err
+	}
+	tagFilters, err := r.GetTagFilters(ctx, pool.ID)
+	if err != nil {
+		return 0, err
+	}
+
+	// If no filters at all — nothing to sync
+	if len(geoFilters) == 0 && len(ispFilters) == 0 && len(tagFilters) == 0 {
+		return 0, nil
+	}
+
+	idSet := make(map[int]bool)
+
+	// Helper: add IDs from query
+	addIDs := func(query string, args ...interface{}) error {
+		rows, err := r.db.Pool.Query(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("filter query failed: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			idSet[id] = true
+		}
+		return nil
+	}
+
+	// Geo filters (OR between filters)
+	for _, f := range geoFilters {
+		if f.CityName != "" {
+			if err := addIDs(`SELECT id FROM proxies WHERE country_code=$1 AND city_name ILIKE $2`,
+				f.CountryCode, "%"+f.CityName+"%"); err != nil {
+				return 0, err
+			}
+		} else {
+			if err := addIDs(`SELECT id FROM proxies WHERE country_code=$1`, f.CountryCode); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	// ISP filters (OR between ISPs, ILIKE match)
+	for _, isp := range ispFilters {
+		if err := addIDs(`SELECT id FROM proxies WHERE isp ILIKE $1`, "%"+isp+"%"); err != nil {
+			return 0, err
+		}
+	}
+
+	// Tag filters (AND — proxy must have ALL specified tags)
+	if len(tagFilters) > 0 {
+		rows, err := r.db.Pool.Query(ctx,
+			`SELECT id FROM proxies WHERE tags @> $1::text[]`, tagFilters)
+		if err != nil {
+			return 0, fmt.Errorf("tag filter query failed: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				return 0, err
+			}
+			idSet[id] = true
+		}
+	}
+
+	ids := make([]int, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+
+	if err := r.ClearProxies(ctx, pool.ID); err != nil {
+		return 0, err
+	}
+	if err := r.AddProxies(ctx, pool.ID, ids); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+// --- Alert Rules ---
+
+// GetAlertRules returns all alert rules for a pool
+func (r *PoolRepository) GetAlertRules(ctx context.Context, poolID int) ([]models.PoolAlertRule, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT id, pool_id, enabled, min_active_proxies, webhook_url, webhook_method,
+		       last_fired_at, cooldown_minutes, created_at, updated_at
+		FROM pool_alert_rules WHERE pool_id=$1 ORDER BY id`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rules []models.PoolAlertRule
+	for rows.Next() {
+		var rule models.PoolAlertRule
+		if err := rows.Scan(
+			&rule.ID, &rule.PoolID, &rule.Enabled, &rule.MinActiveProxies,
+			&rule.WebhookURL, &rule.WebhookMethod, &rule.LastFiredAt,
+			&rule.CooldownMinutes, &rule.CreatedAt, &rule.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	if rules == nil {
+		rules = []models.PoolAlertRule{}
+	}
+	return rules, nil
+}
+
+// GetAllAlertRules returns all enabled alert rules (for the watcher goroutine)
+func (r *PoolRepository) GetAllAlertRules(ctx context.Context) ([]models.PoolAlertRule, error) {
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT id, pool_id, enabled, min_active_proxies, webhook_url, webhook_method,
+		       last_fired_at, cooldown_minutes, created_at, updated_at
+		FROM pool_alert_rules WHERE enabled = true ORDER BY pool_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rules []models.PoolAlertRule
+	for rows.Next() {
+		var rule models.PoolAlertRule
+		if err := rows.Scan(
+			&rule.ID, &rule.PoolID, &rule.Enabled, &rule.MinActiveProxies,
+			&rule.WebhookURL, &rule.WebhookMethod, &rule.LastFiredAt,
+			&rule.CooldownMinutes, &rule.CreatedAt, &rule.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+// CreateAlertRule creates a new alert rule for a pool
+func (r *PoolRepository) CreateAlertRule(ctx context.Context, poolID int, req models.CreatePoolAlertRuleRequest) (*models.PoolAlertRule, error) {
+	method := req.WebhookMethod
+	if method == "" {
+		method = "POST"
+	}
+	cooldown := req.CooldownMinutes
+	if cooldown < 1 {
+		cooldown = 30
+	}
+	var rule models.PoolAlertRule
+	err := r.db.Pool.QueryRow(ctx, `
+		INSERT INTO pool_alert_rules (pool_id, enabled, min_active_proxies, webhook_url, webhook_method, cooldown_minutes)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING id, pool_id, enabled, min_active_proxies, webhook_url, webhook_method,
+		          last_fired_at, cooldown_minutes, created_at, updated_at`,
+		poolID, req.Enabled, req.MinActiveProxies, req.WebhookURL, method, cooldown,
+	).Scan(
+		&rule.ID, &rule.PoolID, &rule.Enabled, &rule.MinActiveProxies,
+		&rule.WebhookURL, &rule.WebhookMethod, &rule.LastFiredAt,
+		&rule.CooldownMinutes, &rule.CreatedAt, &rule.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create alert rule: %w", err)
+	}
+	return &rule, nil
+}
+
+// UpdateAlertRule updates an alert rule
+func (r *PoolRepository) UpdateAlertRule(ctx context.Context, ruleID int, req models.CreatePoolAlertRuleRequest) (*models.PoolAlertRule, error) {
+	var rule models.PoolAlertRule
+	err := r.db.Pool.QueryRow(ctx, `
+		UPDATE pool_alert_rules SET
+			enabled           = $1,
+			min_active_proxies= $2,
+			webhook_url       = $3,
+			webhook_method    = CASE WHEN $4 <> '' THEN $4 ELSE webhook_method END,
+			cooldown_minutes  = CASE WHEN $5 > 0 THEN $5 ELSE cooldown_minutes END,
+			updated_at        = NOW()
+		WHERE id = $6
+		RETURNING id, pool_id, enabled, min_active_proxies, webhook_url, webhook_method,
+		          last_fired_at, cooldown_minutes, created_at, updated_at`,
+		req.Enabled, req.MinActiveProxies, req.WebhookURL, req.WebhookMethod, req.CooldownMinutes, ruleID,
+	).Scan(
+		&rule.ID, &rule.PoolID, &rule.Enabled, &rule.MinActiveProxies,
+		&rule.WebhookURL, &rule.WebhookMethod, &rule.LastFiredAt,
+		&rule.CooldownMinutes, &rule.CreatedAt, &rule.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to update alert rule: %w", err)
+	}
+	return &rule, nil
+}
+
+// DeleteAlertRule deletes an alert rule
+func (r *PoolRepository) DeleteAlertRule(ctx context.Context, ruleID int) error {
+	_, err := r.db.Pool.Exec(ctx, `DELETE FROM pool_alert_rules WHERE id=$1`, ruleID)
+	return err
+}
+
+// UpdateAlertRuleFiredAt records when an alert was last fired
+func (r *PoolRepository) UpdateAlertRuleFiredAt(ctx context.Context, ruleID int) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`UPDATE pool_alert_rules SET last_fired_at=NOW() WHERE id=$1`, ruleID)
+	return err
+}
+
+// --- Export ---
+
+// ExportProxies returns pool proxies formatted for export (txt/csv)
+func (r *PoolRepository) ExportProxies(ctx context.Context, poolID int) ([]models.PoolProxy, error) {
+	return r.GetProxies(ctx, poolID)
 }

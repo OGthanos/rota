@@ -90,6 +90,7 @@ func (r *ProxyRepository) List(ctx context.Context, page, limit int, search, sta
 			requests, successful_requests, failed_requests,
 			avg_response_time, last_check,
 			country_code, country_name, region_name, city_name, isp,
+			COALESCE(tags, '{}') AS tags,
 			created_at, updated_at
 		FROM proxies
 		%s
@@ -113,6 +114,7 @@ func (r *ProxyRepository) List(ctx context.Context, page, limit int, search, sta
 			&p.Requests, &p.SuccessfulRequests, &p.FailedRequests,
 			&p.AvgResponseTime, &p.LastCheck,
 			&p.CountryCode, &p.CountryName, &p.RegionName, &p.CityName, &p.ISP,
+			&p.Tags,
 			&p.CreatedAt, &p.UpdatedAt,
 		)
 		if err != nil {
@@ -123,6 +125,11 @@ func (r *ProxyRepository) List(ctx context.Context, page, limit int, search, sta
 		successRate := 0.0
 		if p.Requests > 0 {
 			successRate = (float64(p.SuccessfulRequests) / float64(p.Requests)) * 100
+		}
+
+		tags := p.Tags
+		if tags == nil {
+			tags = []string{}
 		}
 
 		proxies = append(proxies, models.ProxyWithStats{
@@ -140,6 +147,7 @@ func (r *ProxyRepository) List(ctx context.Context, page, limit int, search, sta
 			RegionName:      p.RegionName,
 			CityName:        p.CityName,
 			ISP:             p.ISP,
+			Tags:            tags,
 			CreatedAt:       p.CreatedAt,
 			UpdatedAt:       p.UpdatedAt,
 		})
@@ -156,6 +164,7 @@ func (r *ProxyRepository) GetByID(ctx context.Context, id int) (*models.Proxy, e
 			requests, successful_requests, failed_requests,
 			avg_response_time, last_check, last_error,
 			country_code, country_name, region_name, city_name, isp,
+			COALESCE(tags, '{}') AS tags,
 			created_at, updated_at
 		FROM proxies
 		WHERE id = $1
@@ -167,6 +176,7 @@ func (r *ProxyRepository) GetByID(ctx context.Context, id int) (*models.Proxy, e
 		&p.Requests, &p.SuccessfulRequests, &p.FailedRequests,
 		&p.AvgResponseTime, &p.LastCheck, &p.LastError,
 		&p.CountryCode, &p.CountryName, &p.RegionName, &p.CityName, &p.ISP,
+		&p.Tags,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 
@@ -177,21 +187,27 @@ func (r *ProxyRepository) GetByID(ctx context.Context, id int) (*models.Proxy, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to get proxy: %w", err)
 	}
-
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
 	return &p, nil
 }
 
 // Create creates a new proxy
 func (r *ProxyRepository) Create(ctx context.Context, req models.CreateProxyRequest) (*models.Proxy, error) {
+	tags := req.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	query := `
-		INSERT INTO proxies (address, protocol, username, password)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, address, protocol, username, status, created_at, updated_at
+		INSERT INTO proxies (address, protocol, username, password, tags)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, address, protocol, username, status, tags, created_at, updated_at
 	`
 
 	var p models.Proxy
-	err := r.db.Pool.QueryRow(ctx, query, req.Address, req.Protocol, req.Username, req.Password).Scan(
-		&p.ID, &p.Address, &p.Protocol, &p.Username, &p.Status, &p.CreatedAt, &p.UpdatedAt,
+	err := r.db.Pool.QueryRow(ctx, query, req.Address, req.Protocol, req.Username, req.Password, tags).Scan(
+		&p.ID, &p.Address, &p.Protocol, &p.Username, &p.Status, &p.Tags, &p.CreatedAt, &p.UpdatedAt,
 	)
 
 	if err != nil {
@@ -202,26 +218,108 @@ func (r *ProxyRepository) Create(ctx context.Context, req models.CreateProxyRequ
 		}
 		return nil, fmt.Errorf("failed to create proxy: %w", err)
 	}
-
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
 	return &p, nil
+}
+
+// Upsert creates or updates a proxy, returning the result status
+func (r *ProxyRepository) Upsert(ctx context.Context, req models.CreateProxyRequest) (id int, status string, err error) {
+	tags := req.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	// Check if proxy exists
+	var existingID int
+	checkErr := r.db.Pool.QueryRow(ctx,
+		`SELECT id FROM proxies WHERE address=$1 AND protocol=$2`, req.Address, req.Protocol,
+	).Scan(&existingID)
+
+	if checkErr == pgx.ErrNoRows {
+		// Insert new
+		insErr := r.db.Pool.QueryRow(ctx,
+			`INSERT INTO proxies (address, protocol, username, password, tags)
+			 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+			req.Address, req.Protocol, req.Username, req.Password, tags,
+		).Scan(&id)
+		if insErr != nil {
+			return 0, "failed", insErr
+		}
+		return id, "created", nil
+	}
+	if checkErr != nil {
+		return 0, "failed", checkErr
+	}
+
+	// Update existing — update tags/auth if provided, skip if nothing changed
+	_, updErr := r.db.Pool.Exec(ctx,
+		`UPDATE proxies SET
+			username   = COALESCE($1, username),
+			password   = COALESCE($2, password),
+			tags       = CASE WHEN array_length($3::text[], 1) > 0 THEN $3::text[] ELSE tags END,
+			updated_at = NOW()
+		WHERE id = $4`,
+		req.Username, req.Password, tags, existingID,
+	)
+	if updErr != nil {
+		return existingID, "failed", updErr
+	}
+	return existingID, "updated", nil
+}
+
+// DeleteDeadProxies removes proxies that have been in failed status for more than maxDays days
+// and optionally those with success rate below minSuccessRate (0 = disabled)
+func (r *ProxyRepository) DeleteDeadProxies(ctx context.Context, maxFailedDays int, minSuccessRate float64) (int, error) {
+	var total int64
+	// Delete by failed duration
+	if maxFailedDays > 0 {
+		tag, err := r.db.Pool.Exec(ctx, `
+			DELETE FROM proxies
+			WHERE status = 'failed'
+			  AND last_check < NOW() - ($1 || ' days')::INTERVAL`,
+			maxFailedDays)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete dead proxies by age: %w", err)
+		}
+		total += tag.RowsAffected()
+	}
+	// Delete by success rate (only proxies with enough requests to be meaningful: >= 10)
+	if minSuccessRate > 0 {
+		tag, err := r.db.Pool.Exec(ctx, `
+			DELETE FROM proxies
+			WHERE requests >= 10
+			  AND (successful_requests::float / requests::float * 100) < $1`,
+			minSuccessRate)
+		if err != nil {
+			return 0, fmt.Errorf("failed to delete dead proxies by success rate: %w", err)
+		}
+		total += tag.RowsAffected()
+	}
+	return int(total), nil
 }
 
 // Update updates a proxy
 func (r *ProxyRepository) Update(ctx context.Context, id int, req models.UpdateProxyRequest) (*models.Proxy, error) {
+	tags := req.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	query := `
 		UPDATE proxies
-		SET address = COALESCE(NULLIF($1, ''), address),
-		    protocol = COALESCE(NULLIF($2, ''), protocol),
-		    username = $3,
-		    password = $4,
+		SET address    = COALESCE(NULLIF($1, ''), address),
+		    protocol   = COALESCE(NULLIF($2, ''), protocol),
+		    username   = $3,
+		    password   = $4,
+		    tags       = $5,
 		    updated_at = NOW()
-		WHERE id = $5
-		RETURNING id, address, protocol, status, updated_at
+		WHERE id = $6
+		RETURNING id, address, protocol, status, COALESCE(tags,'{}'), updated_at
 	`
 
 	var p models.Proxy
-	err := r.db.Pool.QueryRow(ctx, query, req.Address, req.Protocol, req.Username, req.Password, id).Scan(
-		&p.ID, &p.Address, &p.Protocol, &p.Status, &p.UpdatedAt,
+	err := r.db.Pool.QueryRow(ctx, query, req.Address, req.Protocol, req.Username, req.Password, tags, id).Scan(
+		&p.ID, &p.Address, &p.Protocol, &p.Status, &p.Tags, &p.UpdatedAt,
 	)
 
 	if err == pgx.ErrNoRows {

@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/alpkeskin/rota/core/internal/models"
 	"github.com/alpkeskin/rota/core/internal/repository"
@@ -97,6 +100,18 @@ func (h *PoolHandler) Create(w http.ResponseWriter, r *http.Request) {
 			h.logger.Warn("failed to set geo filters", "pool_id", pool.ID, "error", err)
 		}
 	}
+	// ISP filters
+	if len(req.ISPFilters) > 0 {
+		if err := h.poolRepo.SetISPFilters(r.Context(), pool.ID, req.ISPFilters); err != nil {
+			h.logger.Warn("failed to set ISP filters", "pool_id", pool.ID, "error", err)
+		}
+	}
+	// Tag filters
+	if len(req.TagFilters) > 0 {
+		if err := h.poolRepo.SetTagFilters(r.Context(), pool.ID, req.TagFilters); err != nil {
+			h.logger.Warn("failed to set tag filters", "pool_id", pool.ID, "error", err)
+		}
+	}
 
 	// Always sync immediately after creation so pool is populated right away
 	syncCount, syncErr := h.poolSvc.SyncPool(r.Context(), pool.ID)
@@ -111,6 +126,8 @@ func (h *PoolHandler) Create(w http.ResponseWriter, r *http.Request) {
 		pool = updated
 	}
 	pool.GeoFilters = filters
+	pool.ISPFilters = req.ISPFilters
+	pool.TagFilters = req.TagFilters
 	writeJSON(w, http.StatusCreated, pool)
 }
 
@@ -132,19 +149,44 @@ func (h *PoolHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filtersUpdated := false
+
 	// Update multi-geo filters if provided in request
 	if req.GeoFilters != nil {
 		if err := h.poolRepo.SetGeoFilters(r.Context(), id, req.GeoFilters); err != nil {
 			h.logger.Warn("failed to update geo filters", "pool_id", id, "error", err)
 		}
+		pool.GeoFilters = req.GeoFilters
+		filtersUpdated = true
+	}
+	// Update ISP filters if provided
+	if req.ISPFilters != nil {
+		if err := h.poolRepo.SetISPFilters(r.Context(), id, req.ISPFilters); err != nil {
+			h.logger.Warn("failed to update ISP filters", "pool_id", id, "error", err)
+		}
+		pool.ISPFilters = req.ISPFilters
+		filtersUpdated = true
+	}
+	// Update tag filters if provided
+	if req.TagFilters != nil {
+		if err := h.poolRepo.SetTagFilters(r.Context(), id, req.TagFilters); err != nil {
+			h.logger.Warn("failed to update tag filters", "pool_id", id, "error", err)
+		}
+		pool.TagFilters = req.TagFilters
+		filtersUpdated = true
+	}
+
+	if filtersUpdated {
 		// Re-sync immediately
 		if _, err := h.poolSvc.SyncPool(r.Context(), id); err != nil {
 			h.logger.Warn("sync after update failed", "pool_id", id, "error", err)
 		}
 		if updated, err := h.poolRepo.GetByID(r.Context(), id); err == nil && updated != nil {
 			pool = updated
+			pool.GeoFilters = req.GeoFilters
+			pool.ISPFilters = req.ISPFilters
+			pool.TagFilters = req.TagFilters
 		}
-		pool.GeoFilters = req.GeoFilters
 	}
 
 	writeJSON(w, http.StatusOK, pool)
@@ -325,4 +367,197 @@ func (h *PoolHandler) GeoCitiesByCountry(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"cities": cities})
+}
+
+// Export exports all proxies from a pool as txt or csv
+//
+//	GET /api/v1/pools/{id}/export?format=txt|csv
+func (h *PoolHandler) Export(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "txt"
+	}
+
+	pool, err := h.poolRepo.GetByID(r.Context(), id)
+	if err != nil || pool == nil {
+		http.Error(w, `{"error":"pool not found"}`, http.StatusNotFound)
+		return
+	}
+
+	proxies, err := h.poolRepo.ExportProxies(r.Context(), id)
+	if err != nil {
+		h.logger.Error("failed to export pool proxies", "error", err)
+		http.Error(w, `{"error":"failed to export proxies"}`, http.StatusInternalServerError)
+		return
+	}
+
+	switch format {
+	case "csv":
+		h.exportPoolCSV(w, pool.Name, proxies)
+	default:
+		h.exportPoolTxt(w, pool.Name, proxies)
+	}
+}
+
+func (h *PoolHandler) exportPoolTxt(w http.ResponseWriter, poolName string, proxies []models.PoolProxy) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.txt"`, poolName))
+	for _, p := range proxies {
+		fmt.Fprintf(w, "%s://%s\n", p.Protocol, p.Address)
+	}
+}
+
+func (h *PoolHandler) exportPoolCSV(w http.ResponseWriter, poolName string, proxies []models.PoolProxy) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.csv"`, poolName))
+	wr := csv.NewWriter(w)
+	_ = wr.Write([]string{"address", "protocol", "status", "country_code", "city", "isp", "success_rate", "avg_response_ms"})
+	for _, p := range proxies {
+		cc := ""
+		if p.CountryCode != nil {
+			cc = *p.CountryCode
+		}
+		city := ""
+		if p.CityName != nil {
+			city = *p.CityName
+		}
+		isp := ""
+		if p.ISP != nil {
+			isp = *p.ISP
+		}
+		_ = wr.Write([]string{
+			p.Address, p.Protocol, p.Status, cc, city, isp,
+			fmt.Sprintf("%.1f", p.SuccessRate),
+			strconv.Itoa(p.AvgResponseTime),
+		})
+	}
+	wr.Flush()
+}
+
+// --- Alert Rules ---
+
+// ListAlertRules lists all alert rules for a pool
+func (h *PoolHandler) ListAlertRules(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+	rules, err := h.poolRepo.GetAlertRules(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get alert rules"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules})
+}
+
+// CreateAlertRule creates an alert rule for a pool
+func (h *PoolHandler) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+	var req models.CreatePoolAlertRuleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.WebhookURL == "" {
+		http.Error(w, `{"error":"webhook_url is required"}`, http.StatusBadRequest)
+		return
+	}
+	rule, err := h.poolRepo.CreateAlertRule(r.Context(), id, req)
+	if err != nil {
+		h.logger.Error("failed to create alert rule", "error", err)
+		http.Error(w, `{"error":"failed to create alert rule"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+// UpdateAlertRule updates an alert rule
+func (h *PoolHandler) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
+	ruleID, err := strconv.Atoi(chi.URLParam(r, "rule_id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid rule_id"}`, http.StatusBadRequest)
+		return
+	}
+	var req models.CreatePoolAlertRuleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	rule, err := h.poolRepo.UpdateAlertRule(r.Context(), ruleID, req)
+	if err != nil || rule == nil {
+		http.Error(w, `{"error":"rule not found or update failed"}`, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, rule)
+}
+
+// DeleteAlertRule deletes an alert rule
+func (h *PoolHandler) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
+	ruleID, err := strconv.Atoi(chi.URLParam(r, "rule_id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid rule_id"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.poolRepo.DeleteAlertRule(r.Context(), ruleID); err != nil {
+		http.Error(w, `{"error":"failed to delete alert rule"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GetISPList returns unique ISPs from proxy table for filter builder UI
+func (h *PoolHandler) GetISPList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	// Simple distinct query with optional search
+	rows, err := h.poolRepo.GetDB().Pool.Query(r.Context(),
+		`SELECT DISTINCT isp FROM proxies WHERE isp IS NOT NULL AND isp ILIKE $1 ORDER BY isp LIMIT 50`,
+		"%"+q+"%")
+	if err != nil {
+		http.Error(w, `{"error":"failed to get ISPs"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var isps []string
+	for rows.Next() {
+		var isp string
+		if err := rows.Scan(&isp); err == nil && strings.TrimSpace(isp) != "" {
+			isps = append(isps, isp)
+		}
+	}
+	if isps == nil {
+		isps = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"isps": isps})
+}
+
+// GetTagList returns unique proxy tags for filter builder UI
+func (h *PoolHandler) GetTagList(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.poolRepo.GetDB().Pool.Query(r.Context(),
+		`SELECT DISTINCT unnest(tags) AS tag FROM proxies WHERE array_length(tags,1) > 0 ORDER BY tag LIMIT 100`)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get tags"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err == nil && strings.TrimSpace(tag) != "" {
+			tags = append(tags, tag)
+		}
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tags": tags})
 }

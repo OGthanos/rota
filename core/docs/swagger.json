@@ -934,6 +934,315 @@
                     }
                 }
             }
+        },
+        "/pools/{id}/export": {
+            "get": {
+                "description": "Export all proxies from a pool as txt or csv file",
+                "produces": [
+                    "text/plain",
+                    "text/csv"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "Export pool proxies",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Pool ID"
+                    },
+                    {
+                        "name": "format",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "description": "Export format: txt (default) or csv",
+                        "enum": [
+                            "txt",
+                            "csv"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Proxy list file"
+                    },
+                    "404": {
+                        "description": "Pool not found"
+                    }
+                }
+            }
+        },
+        "/pools/{id}/alert-rules": {
+            "get": {
+                "description": "List all alert rules for a proxy pool",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "List pool alert rules",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Pool ID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Alert rules list",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "rules": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/models.PoolAlertRule"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error"
+                    }
+                }
+            },
+            "post": {
+                "description": "Create a webhook alert rule that fires when active proxies drop below threshold",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "Create pool alert rule",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Pool ID"
+                    },
+                    {
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CreatePoolAlertRuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created alert rule",
+                        "schema": {
+                            "$ref": "#/definitions/models.PoolAlertRule"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request"
+                    },
+                    "500": {
+                        "description": "Internal server error"
+                    }
+                }
+            }
+        },
+        "/pools/{id}/alert-rules/{rule_id}": {
+            "put": {
+                "description": "Update an existing pool alert rule",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "Update pool alert rule",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Pool ID"
+                    },
+                    {
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Rule ID"
+                    },
+                    {
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.CreatePoolAlertRuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated rule",
+                        "schema": {
+                            "$ref": "#/definitions/models.PoolAlertRule"
+                        }
+                    },
+                    "404": {
+                        "description": "Rule not found"
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a pool alert rule",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "Delete pool alert rule",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Pool ID"
+                    },
+                    {
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true,
+                        "type": "integer",
+                        "description": "Rule ID"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deleted successfully"
+                    },
+                    "500": {
+                        "description": "Internal server error"
+                    }
+                }
+            }
+        },
+        "/pools/isp-list": {
+            "get": {
+                "description": "Get distinct ISP values from proxy table for pool filter builder",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "List available ISPs",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "description": "Search filter"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ISP list",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "isps": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/pools/tag-list": {
+            "get": {
+                "description": "Get all unique proxy tags for pool filter builder",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pools"
+                ],
+                "summary": "List available proxy tags",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Tag list",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "tags": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1218,6 +1527,13 @@
                 },
                 "username": {
                     "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "User-defined labels for this proxy"
                 }
             }
         },
@@ -1293,6 +1609,13 @@
                 },
                 "username": {
                     "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "User-defined labels for this proxy"
                 }
             }
         },
@@ -1531,6 +1854,111 @@
                 },
                 "runtime": {
                     "$ref": "#/definitions/internal_api_handlers.RuntimeMetrics"
+                }
+            }
+        },
+        "models.PoolAlertRule": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "pool_id": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "min_active_proxies": {
+                    "type": "integer",
+                    "description": "Fire alert when active proxies drop below this number"
+                },
+                "webhook_url": {
+                    "type": "string"
+                },
+                "webhook_method": {
+                    "type": "string",
+                    "enum": [
+                        "POST",
+                        "GET"
+                    ]
+                },
+                "last_fired_at": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "cooldown_minutes": {
+                    "type": "integer",
+                    "description": "Minimum minutes between consecutive alerts"
+                },
+                "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "models.CreatePoolAlertRuleRequest": {
+            "type": "object",
+            "required": [
+                "webhook_url",
+                "min_active_proxies"
+            ],
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "min_active_proxies": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "webhook_url": {
+                    "type": "string",
+                    "description": "URL to POST alert payload to"
+                },
+                "webhook_method": {
+                    "type": "string",
+                    "enum": [
+                        "POST",
+                        "GET"
+                    ],
+                    "default": "POST"
+                },
+                "cooldown_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 30
+                }
+            }
+        },
+        "models.PoolAlertPayload": {
+            "type": "object",
+            "properties": {
+                "event": {
+                    "type": "string",
+                    "example": "pool.degraded"
+                },
+                "pool_id": {
+                    "type": "integer"
+                },
+                "pool_name": {
+                    "type": "string"
+                },
+                "active_proxies": {
+                    "type": "integer"
+                },
+                "total_proxies": {
+                    "type": "integer"
+                },
+                "threshold": {
+                    "type": "integer"
+                },
+                "fired_at": {
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         }

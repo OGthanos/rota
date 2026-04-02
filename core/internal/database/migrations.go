@@ -363,6 +363,82 @@ var migrations = []Migration{
 		`,
 	},
 	{
+		Version:     17,
+		Description: "Add tags to proxies table",
+		Up: `
+			ALTER TABLE proxies ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+			CREATE INDEX IF NOT EXISTS idx_proxies_tags ON proxies USING gin(tags);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_proxies_tags;
+			ALTER TABLE proxies DROP COLUMN IF EXISTS tags;
+		`,
+	},
+	{
+		Version:     18,
+		Description: "Add sync_mode to proxy_pools, ISP filter table, pool_alerts table",
+		Up: `
+			-- sync_mode: 'auto' | 'manual'
+			ALTER TABLE proxy_pools ADD COLUMN IF NOT EXISTS sync_mode VARCHAR(10) NOT NULL DEFAULT 'auto';
+
+			-- ISP filters for pools
+			CREATE TABLE IF NOT EXISTS pool_isp_filters (
+				id       SERIAL PRIMARY KEY,
+				pool_id  INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				isp      TEXT NOT NULL,
+				UNIQUE (pool_id, isp)
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_isp_filters_pool_id ON pool_isp_filters(pool_id);
+
+			-- Tag filters for pools
+			CREATE TABLE IF NOT EXISTS pool_tag_filters (
+				id      SERIAL PRIMARY KEY,
+				pool_id INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				tag     TEXT NOT NULL,
+				UNIQUE (pool_id, tag)
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_tag_filters_pool_id ON pool_tag_filters(pool_id);
+
+			-- Alert rules per pool: fire webhook when active proxy count drops below threshold
+			CREATE TABLE IF NOT EXISTS pool_alert_rules (
+				id                  SERIAL PRIMARY KEY,
+				pool_id             INTEGER NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+				enabled             BOOLEAN NOT NULL DEFAULT true,
+				min_active_proxies  INTEGER NOT NULL DEFAULT 5,
+				webhook_url         TEXT NOT NULL,
+				webhook_method      VARCHAR(10) NOT NULL DEFAULT 'POST',
+				last_fired_at       TIMESTAMP,
+				cooldown_minutes    INTEGER NOT NULL DEFAULT 30,
+				created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_pool_alert_rules_pool_id ON pool_alert_rules(pool_id);
+		`,
+		Down: `
+			DROP TABLE IF EXISTS pool_alert_rules;
+			DROP TABLE IF EXISTS pool_tag_filters;
+			DROP TABLE IF EXISTS pool_isp_filters;
+			ALTER TABLE proxy_pools DROP COLUMN IF EXISTS sync_mode;
+		`,
+	},
+	{
+		Version:     19,
+		Description: "Add proxy cleanup settings and rate limit to proxy_users",
+		Up: `
+			-- Dead proxy cleanup settings
+			INSERT INTO settings (key, value) VALUES
+			('proxy_cleanup', '{"enabled": false, "max_failed_days": 7, "min_success_rate": 0, "cleanup_interval_hours": 24}'::jsonb)
+			ON CONFLICT (key) DO NOTHING;
+
+			-- Per-user rate limiting
+			ALTER TABLE proxy_users ADD COLUMN IF NOT EXISTS requests_per_minute INTEGER NOT NULL DEFAULT 0;
+		`,
+		Down: `
+			DELETE FROM settings WHERE key = 'proxy_cleanup';
+			ALTER TABLE proxy_users DROP COLUMN IF EXISTS requests_per_minute;
+		`,
+	},
+	{
 		Version:     10,
 		Description: "Update default timeout and retry settings for better proxy compatibility",
 		Up: `

@@ -122,9 +122,15 @@ func New(cfg *config.Config, log *logger.Logger, db *database.DB) *Server {
 		userHandler:          userHandler,
 	}
 
+	// Alert watcher + proxy cleanup services
+	alertWatcher := services.NewAlertWatcher(poolRepo, log)
+	cleanupSvc := services.NewProxyCleanupService(proxyRepo, settingsRepo, log)
+
 	// Start background services
 	sourceSvc.Start(context.Background())
 	poolSvc.Start(context.Background())
+	alertWatcher.Start(context.Background())
+	cleanupSvc.Start(context.Background())
 
 	s.setupMiddleware()
 	s.setupRoutes()
@@ -236,6 +242,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/pools/geo-summary", s.poolHandler.GeoSummary)
 		r.Get("/pools/geo-countries", s.poolHandler.GeoByCountry)
 		r.Get("/pools/geo-cities/{country_code}", s.poolHandler.GeoCitiesByCountry)
+		r.Get("/pools/isp-list", s.poolHandler.GetISPList)
+		r.Get("/pools/tag-list", s.poolHandler.GetTagList)
 		r.Get("/pools/{id}", s.poolHandler.Get)
 		r.Put("/pools/{id}", s.poolHandler.Update)
 		r.Delete("/pools/{id}", s.poolHandler.Delete)
@@ -243,9 +251,15 @@ func (s *Server) setupRoutes() {
 		r.Post("/pools/{id}/proxies", s.poolHandler.AddProxies)
 		r.Delete("/pools/{id}/proxies", s.poolHandler.RemoveProxies)
 		r.Post("/pools/{id}/sync", s.poolHandler.Sync)
+		r.Get("/pools/{id}/export", s.poolHandler.Export)
 		r.Post("/pools/{id}/health-check", s.poolHandler.HealthCheck)
 		r.Get("/pools/{id}/health-check/jobs", s.poolHandler.HealthCheckJobs)
 		r.Get("/pools/{id}/health-check/{job_id}", s.poolHandler.HealthCheckStatus)
+		// Alert rules
+		r.Get("/pools/{id}/alert-rules", s.poolHandler.ListAlertRules)
+		r.Post("/pools/{id}/alert-rules", s.poolHandler.CreateAlertRule)
+		r.Put("/pools/{id}/alert-rules/{rule_id}", s.poolHandler.UpdateAlertRule)
+		r.Delete("/pools/{id}/alert-rules/{rule_id}", s.poolHandler.DeleteAlertRule)
 	})
 
 	// WebSocket routes — protected via token query param

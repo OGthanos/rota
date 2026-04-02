@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,75 @@ import (
 	"github.com/alpkeskin/rota/core/internal/repository"
 	"github.com/alpkeskin/rota/core/pkg/logger"
 )
+
+// parsedProxy holds the extracted fields from a single proxy list line.
+type parsedProxy struct {
+	address  string  // host:port
+	protocol string  // http|https|socks4|socks4a|socks5 — empty means "use source default"
+	username *string // nil if not present
+	password *string // nil if not present
+}
+
+// Supported formats (auth is always optional):
+//
+//	host:port
+//	user:pass@host:port
+//	protocol://host:port
+//	protocol://user:pass@host:port
+func parseProxyLine(line string) (parsedProxy, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return parsedProxy{}, false
+	}
+
+	var proto string
+	var user, pass *string
+
+	// ── 1. Strip protocol scheme if present ──────────────────────────────
+	if idx := strings.Index(line, "://"); idx != -1 {
+		scheme := strings.ToLower(line[:idx])
+		switch scheme {
+		case "http", "https", "socks4", "socks4a", "socks5":
+			proto = scheme
+		default:
+			// Unknown scheme — treat whole thing as address and hope for the best
+		}
+		line = line[idx+3:]
+	}
+
+	// ── 2. Try url.Parse for user:pass@host:port ─────────────────────────
+	// Wrap with a fake scheme so url.Parse handles the userinfo correctly.
+	parsed, err := url.Parse("x://" + line)
+	if err == nil && parsed.Host != "" {
+		if ui := parsed.User; ui != nil {
+			u := ui.Username()
+			if u != "" {
+				user = &u
+			}
+			if p, ok := ui.Password(); ok && p != "" {
+				pass = &p
+			}
+		}
+		host := parsed.Host
+		// url.Parse puts host:port in Host
+		if !strings.Contains(host, ":") {
+			return parsedProxy{}, false // no port — unusable
+		}
+		return parsedProxy{
+			address:  host,
+			protocol: proto,
+			username: user,
+			password: pass,
+		}, true
+	}
+
+	// ── 3. Fallback: bare host:port (no userinfo) ─────────────────────────
+	if strings.Contains(line, ":") {
+		return parsedProxy{address: line, protocol: proto}, true
+	}
+
+	return parsedProxy{}, false
+}
 
 // SourceService fetches proxy lists from remote URLs and imports them into the DB.
 type SourceService struct {
@@ -135,21 +205,29 @@ func (s *SourceService) fetchAndImport(ctx context.Context, src *models.ProxySou
 		return 0, fmt.Errorf("unexpected HTTP %d from %s", resp.StatusCode, src.URL)
 	}
 
-	addresses, err := parseProxyList(resp.Body)
+	parsed, err := parseProxyList(resp.Body)
 	if err != nil {
 		return 0, fmt.Errorf("parse failed: %w", err)
 	}
-	if len(addresses) == 0 {
+	if len(parsed) == 0 {
 		return 0, nil
 	}
 
-	// Bulk-create (upsert) proxies
-	requests := make([]models.CreateProxyRequest, 0, len(addresses))
-	for _, addr := range addresses {
+	// Build upsert requests — protocol from line takes priority over source default
+	requests := make([]models.CreateProxyRequest, 0, len(parsed))
+	addresses := make([]string, 0, len(parsed))
+	for _, p := range parsed {
+		proto := src.Protocol
+		if p.protocol != "" {
+			proto = p.protocol
+		}
 		requests = append(requests, models.CreateProxyRequest{
-			Address:  addr,
-			Protocol: src.Protocol,
+			Address:  p.address,
+			Protocol: proto,
+			Username: p.username,
+			Password: p.password,
 		})
+		addresses = append(addresses, p.address)
 	}
 
 	created, _ := s.bulkUpsert(ctx, requests)
@@ -160,18 +238,19 @@ func (s *SourceService) fetchAndImport(ctx context.Context, src *models.ProxySou
 	return created, nil
 }
 
-// bulkUpsert inserts proxies, ignoring duplicates. Returns (created, failed).
+// bulkUpsert upserts proxies. Returns (created, failed).
+// Uses Upsert so that username/password from the list update existing entries.
 func (s *SourceService) bulkUpsert(ctx context.Context, proxies []models.CreateProxyRequest) (int, int) {
 	created := 0
 	failed := 0
 	for _, req := range proxies {
-		_, err := s.proxyRepo.Create(ctx, req)
+		_, status, err := s.proxyRepo.Upsert(ctx, req)
 		if err != nil {
-			// duplicate or other error – skip silently
 			failed++
-		} else {
+		} else if status == "created" {
 			created++
 		}
+		// "updated" counts neither as created nor failed — it's an update
 	}
 	return created, failed
 }
@@ -252,23 +331,15 @@ func (s *SourceService) EnrichAll(ctx context.Context) (int, error) {
 	return len(geos), nil
 }
 
-// parseProxyList reads one "ip:port" per line; ignores blank lines / comments.
-func parseProxyList(r io.Reader) ([]string, error) {
-	var addresses []string
+// parseProxyList parses a proxy list file, one entry per line.
+// Returns a slice of parsedProxy; invalid lines are silently skipped.
+func parseProxyList(r io.Reader) ([]parsedProxy, error) {
+	var proxies []parsedProxy
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Accept "ip:port" with optional "protocol://ip:port" prefix
-		if idx := strings.Index(line, "://"); idx != -1 {
-			line = line[idx+3:]
-		}
-		// Validate basic "host:port" shape
-		if strings.Contains(line, ":") {
-			addresses = append(addresses, line)
+		if p, ok := parseProxyLine(scanner.Text()); ok {
+			proxies = append(proxies, p)
 		}
 	}
-	return addresses, scanner.Err()
+	return proxies, scanner.Err()
 }

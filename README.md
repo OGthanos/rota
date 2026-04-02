@@ -58,12 +58,14 @@ Whether you're conducting web scraping operations, performing security research,
 - ♻️ **Auto-Enrich**: Geo data updated automatically after every source fetch
 
 ### Proxy Pools
-- 🗂️ **Named Pools**: Group proxies by any combination of countries and/or cities
-- ☑️ **Multi-Select Builder**: Pick locations via checkboxes — mix US + UK + Tokyo in one pool
-- 🔄 **Auto-Sync**: Pool membership rebuilt automatically whenever proxies are imported or geo-enriched
+- 🗂️ **Named Pools**: Group proxies by any combination of countries, cities, ISPs, or custom tags
+- ☑️ **Multi-Filter Builder**: Pick geo locations, ISP substrings, or proxy tags — mix freely in one pool
+- 🔄 **Auto / Manual Sync**: `sync_mode: auto` rebuilds membership on every import; `manual` keeps it frozen until you trigger sync explicitly
 - 🔁 **Rotation Strategies**: Per-pool `roundrobin`, `random`, or `sticky` (hold N requests per IP)
 - ⚡ **Async Health Checks**: Run health checks against any URL; progress shown in real time
 - ⏱️ **Scheduled Checks**: Cron-style schedule per pool (`*/30 * * * *`)
+- 📤 **Export**: Download pool proxy list as `.txt` or `.csv` (`GET /api/v1/pools/{id}/export?format=txt|csv`)
+- 🔔 **Webhook Alerts**: Per-pool alert rules — fire a POST/GET webhook when active proxy count drops below threshold, with configurable cooldown
 
 ### Per-User Pool Authentication
 - 👤 **Proxy Users**: Create users with bcrypt passwords, each assigned a main pool + ordered fallbacks
@@ -71,12 +73,16 @@ Whether you're conducting web scraping operations, performing security research,
 - 🔄 **Automatic Failover**: If a pool has no live IPs, requests cascade to fallback pools
 - 🔁 **Retry Logic**: Each retry picks a fresh proxy; failed IPs are excluded for that request
 - 📊 **Full Tracking**: All requests, success rates, and response times tracked per proxy
+- ⚡ **Per-User Rate Limit**: Optional `requests_per_minute` cap per user (0 = unlimited)
 
 ### Security
-- 🔐 **JWT Authentication**: All API endpoints require a valid JWT token
+- 🔐 **JWT Authentication**: All API endpoints require a valid JWT token; the browser auto-redirects to login on expiry with "Session expired" message
 - 🔑 **Bcrypt Admin Credentials**: Dashboard password stored as bcrypt hash in database
 - 🔄 **Change Password**: Update username/password via the Settings UI (requires current password)
 - 🌐 **Public endpoints only**: `GET /health` and `POST /auth/login`
+- 🛡️ **Auth Brute-Force Protection**: Per-IP block after N failed attempts + global lockout when request rate exceeds threshold (all configurable via `.env`)
+- 🏷️ **Proxy Tags**: Label proxies with custom tags for fine-grained pool filtering
+- 🧹 **Dead Proxy Cleanup**: Configurable automatic removal of long-failed or low-quality proxies
 
 ### Web Dashboard
 - 📊 **Real-Time Metrics**: Live statistics, charts, and system monitoring
@@ -146,9 +152,14 @@ All settings are controlled through a single `.env` file (see `.env.example` for
 | `API_PORT` | `8001` | Host port for the REST API |
 | `DASHBOARD_PORT` | `3000` | Host port for the web dashboard |
 | `ROTA_ADMIN_USER` | `admin` | Initial dashboard username (seeded once) |
-| `ROTA_ADMIN_PASSWORD` | `admin` | Initial dashboard password (seeded once) |
+| `ROTA_ADMIN_PASSWORD` | `admin` | Initial dashboard password (seeded once, min 6 chars) |
 | `DB_PASSWORD` | `rota_password` | TimescaleDB password |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `AUTH_IP_MAX_ATTEMPTS` | `10` | Failed login attempts before an IP is blocked |
+| `AUTH_IP_WINDOW_MINUTES` | `10` | Sliding window (minutes) to count per-IP failures |
+| `AUTH_IP_BLOCK_MINUTES` | `30` | How long a blocked IP cannot attempt login |
+| `AUTH_GLOBAL_MAX_PER_MINUTE` | `1000` | Max total login attempts/min across all IPs before global lockout |
+| `AUTH_GLOBAL_LOCKOUT_MINUTES` | `1` | Duration of global login lockout |
 
 > **Note**: `ROTA_ADMIN_USER` and `ROTA_ADMIN_PASSWORD` are only used when the database is empty (first start). After that, use the **Settings → Admin Account** page to change credentials.
 
@@ -329,12 +340,62 @@ After proxies are geolocated, open the **Proxy Pools → Geo Distribution** tab:
 - Check individual countries or cities; mix them freely
 - Click **Create Pool from selection** — the pool is created and filled instantly
 
+Pools also support **ISP filters** (substring match, OR logic) and **tag filters** (AND logic — proxy must carry all specified tags). Combine geo + ISP + tags in any combination.
+
+#### Pool Sync Modes
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` | Pool membership is rebuilt automatically after every proxy import or geo-enrichment |
+| `manual` | Membership only changes when you press **Sync** — useful for curated pools |
+
+#### Exporting a Pool
+
+```bash
+# Plain text — one protocol://ip:port per line
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8001/api/v1/pools/{id}/export?format=txt" -o pool.txt
+
+# CSV — with status, geo, ISP, success rate
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8001/api/v1/pools/{id}/export?format=csv" -o pool.csv
+```
+
+#### Webhook Alerts
+
+Add an alert rule to a pool to be notified when the active proxy count drops below a threshold:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  "http://localhost:8001/api/v1/pools/{id}/alert-rules" \
+  -d '{
+    "enabled": true,
+    "min_active_proxies": 10,
+    "webhook_url": "https://hooks.slack.com/...",
+    "cooldown_minutes": 30
+  }'
+```
+
+Payload sent to the webhook:
+```json
+{
+  "event": "pool.degraded",
+  "pool_id": 1,
+  "pool_name": "US Residential",
+  "active_proxies": 3,
+  "total_proxies": 50,
+  "threshold": 10,
+  "fired_at": "2026-04-02T04:30:00Z"
+}
+```
+
 ### Per-User Routing
 
 1. Create pools for each location/use-case
 2. Go to **Proxy Users**, click **Add User**
 3. Set a main pool and optional fallback pools (in priority order)
-4. Configure max retries across the chain
+4. Configure max retries across the chain and an optional `requests_per_minute` cap
 
 Users connect as:
 ```
@@ -353,7 +414,7 @@ All API endpoints require a JWT bearer token obtained from `POST /api/v1/auth/lo
 # Login
 TOKEN=$(curl -s -X POST http://localhost:8001/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}' | jq -r '.token')
+  -d '{"username":"admin","password":"yourpassword"}' | jq -r '.token')
 
 # Use token
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8001/api/v1/proxies
@@ -362,6 +423,19 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8001/api/v1/proxies
 Public endpoints (no token required):
 - `GET /health`
 - `POST /api/v1/auth/login`
+
+### Brute-Force Protection
+
+The login endpoint has two independent rate-limit mechanisms:
+
+| Mechanism | Trigger | Response |
+|-----------|---------|----------|
+| **Per-IP block** | ≥ `AUTH_IP_MAX_ATTEMPTS` failed attempts from one IP within `AUTH_IP_WINDOW_MINUTES` minutes | `429` — IP blocked for `AUTH_IP_BLOCK_MINUTES` minutes |
+| **Global lockout** | ≥ `AUTH_GLOBAL_MAX_PER_MINUTE` total attempts per minute across all IPs | `429` — login disabled for everyone for `AUTH_GLOBAL_LOCKOUT_MINUTES` minute(s) |
+
+Both responses include a `Retry-After` header. All thresholds are configurable via `.env`.
+
+The dashboard automatically redirects to the login page with a *"Session expired"* message when a `401` response is received.
 
 ---
 

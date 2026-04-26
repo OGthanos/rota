@@ -6,11 +6,11 @@ services:
     container_name: rota-core
     restart: unless-stopped
     ports:
-      - "${PROXY_PORT:-8000}:8000"
-      - "${API_PORT:-8001}:8001"
+      - "${PROXY_PORT:-8000}:4031"
+      - "${API_PORT:-8001}:4030"
     environment:
-      - PROXY_PORT=${PROXY_PORT:-8000}
-      - API_PORT=${API_PORT:-8001}
+      - PROXY_PORT=${PROXY_PORT:-4031}
+      - API_PORT=${API_PORT:-4030}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - DB_HOST=${DB_HOST:-timescaledb}
       - DB_PORT=${DB_PORT:-5432}
@@ -30,7 +30,7 @@ services:
           "--no-verbose",
           "--tries=1",
           "--spider",
-          "http://localhost:8001/health",
+          "http://localhost:4030/health",
         ]
       interval: 30s
       timeout: 3s
@@ -45,13 +45,13 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:4030}
     container_name: rota-dashboard
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
+      - "${DASHBOARD_PORT:-4000}:4000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:4030}
     networks:
       - rota-network
     depends_on:

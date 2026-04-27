@@ -49,7 +49,7 @@ services:
     container_name: rota-dashboard
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_PORT:-4000}:4000"
+      - "${DASHBOARD_PORT:-3000}:4000"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:4030}
     networks:

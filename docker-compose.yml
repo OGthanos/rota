@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: rota-core
     restart: unless-stopped
+    dns:
+      - 1.1.1.1
     ports:
       - "${PROXY_PORT:-8002}:8002"
       - "${API_PORT:-8001}:8001"
@@ -48,6 +50,8 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8001}
     container_name: rota-dashboard
     restart: unless-stopped
+    dns:
+      - 1.1.1.1
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
@@ -62,6 +66,8 @@ services:
     image: timescale/timescaledb:2.22.1-pg17
     container_name: rota-timescaledb
     restart: unless-stopped
+    dns:
+      - 1.1.1.1
     # Port intentionally NOT exposed to host — DB is internal only
     # Use 127.0.0.1:5432:5432 only if local debug access is needed
     environment:
